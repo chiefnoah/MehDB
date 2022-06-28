@@ -1,6 +1,6 @@
 use std::fs::{self, File};
 use std::path::Path;
-use std::io::{self, Seek};
+use std::io::{self, Seek, Write};
 //use std::collections::hash_map;
 use std::collections::hash_map::Entry;
 //use std::fs::File;
@@ -13,10 +13,14 @@ const SEGMENT_BUCKETS: usize = 64;
 
 pub trait Map<K, V> {
     // get_bytes maybe returns the value associated with the key.
-    fn get_bytes(&self, key: &[u8]) -> Entry<&[u8], &[u8]>;
+    fn get_bytes(&self, key: &[u8]) -> Entry<&[u8], &[u8]> {
+
+    }
     // put_bytes inserts a value associated with a key and returns it's
     // relative offset in the data file.
-    fn put_bytes(&self, key: &[u8], value: &[u8]) -> Result<u64, io::Error>;
+    fn put_bytes(&self, key: &[u8], value: &[u8]) -> Result<u64, io::Error> {
+
+    }
     
     fn put(&self, key: K, value: V) -> Result<u64, io::Error>;
     fn get(&self, key: K) -> Entry<K, V>;
@@ -53,19 +57,16 @@ impl<K, V> Record<K, V> {
     }
 }
 
-// Bucket 
-struct Bucket<K, V> {
-    records: [Record<K, V>; BUCKET_RECORDS]
-}
 
-fn initialize_segment(segment_file: &mut File, from_offset: Option<u64>) -> Result<(), io::Error> {
+fn initialize_segment<K: Default, V: Default>(segment_file: &mut File, from_offset: Option<u64>) -> Result<(), io::Error> {
     segment_file.seek(io::SeekFrom::Start(HEADER_SIZE));
     for i in 0..SEGMENT_BUCKETS {
         for z in 0..BUCKET_RECORDS {
-            r = Record{hash_key: 0, offset: HEADER_SIZE};
-            segment_file.write(&r.pack())?:
+            let r: Record<K, V> = Record{hash_key: 0, offset: HEADER_SIZE, key: Default::default(), value: Default::default()};
+            segment_file.write(&r.pack())?;
         }
     }
+    return Ok(());
 }
 
 impl MehDB {
@@ -100,10 +101,6 @@ impl MehDB {
         })
     }
 
-}
-
-impl MehDB {
-
     fn split_segments<K, V>(&self, hash_key: u64, offset: u64, segment_depth: u8, v: V) {
 
 
@@ -121,15 +118,6 @@ impl<K, V> Map<K, V> for MehDB {
         panic!("Not implemented");
     }
     fn get(&self, key: K) -> Entry<K, V> {
-        panic!("Not implemented");
-    }
-
-    fn get_bytes(&self, key: &[u8]) -> Entry<&[u8], &[u8]> {
-        panic!("Not implemented");
-    }
-    // put_bytes inserts a value associated with a key and returns it's
-    // relative offset in the data file.
-    fn put_bytes(&self, key: &[u8], value: &[u8]) -> Result<u64, io::Error> {
         panic!("Not implemented");
     }
 }
