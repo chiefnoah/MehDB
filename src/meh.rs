@@ -1,10 +1,12 @@
+use serde::{Deserialize, Serialize};
 use std::collections::hash_map::Entry;
+use std::default::Default;
 use std::fs::{self, File};
 use std::hash::Hasher;
 use std::io::{self, Seek, Write};
 use std::path::Path;
 
-use serde::{Deserialize, Serialize};
+use fnv::FnvHasher;
 
 const BUCKET_RECORDS: usize = 16;
 const SEGMENT_BUCKETS: usize = 64;
@@ -25,6 +27,7 @@ pub struct MehDB {
     header: Header,
     dir_file: File,
     segment_file: File,
+    hasher: dyn Hasher,
 }
 
 const HEADER_SIZE: u64 = 16;
@@ -35,19 +38,26 @@ struct Header {
     num_segments: u64,
 }
 
-struct Record<K, V> {
+struct Record<K: Default, V: Default> {
     hash_key: u64,
     key: K,
     value: V,
     offset: u64,
 }
 
-impl<K, V> Record<K, V> {
+impl<K: Default, V: Default> Record<K, V> {
     fn pack(&self) -> [u8; 16] {
         // I don't like that we hae to allocate here
-        let out: Vec<u8> = [self.hash_key.to_le_bytes(), self.offset.to_le_bytes()].concat();
-        out.try_into().unwrap()
+        let mut out: [u8; 16] = [0; 16];
+        out[0..7].copy_from_slice(&self.hash_key.to_le_bytes());
+        out[7..].copy_from_slice(&self.offset.to_le_bytes());
+        out
     }
+}
+
+// Bucket
+struct Bucket<K: Default, V: Default> {
+    records: [Record<K, V>; BUCKET_RECORDS],
 }
 
 fn initialize_segment<K: Default, V: Default>(
@@ -81,7 +91,6 @@ impl MehDB {
         let segment_file_path = path.join("index.bin");
         let segment_file = if !segment_file_path.exists() {
             let f = File::create(segment_file_path);
-
             f
         } else {
             File::open(segment_file_path)
@@ -98,6 +107,7 @@ impl MehDB {
             },
             dir_file: dir_file,
             segment_file: segment_file,
+            hasher: FnvHasher::default(),
         })
     }
 
@@ -108,9 +118,9 @@ impl MehDB {
 
 impl<K, V, H: Hasher> Map<K, V, H> for MehDB {
     fn put(&self, key: K, value: V) -> Result<u64, io::Error> {
-        panic!("Not implemented");
+        todo!("Implement this");
     }
     fn get(&self, key: K) -> Entry<K, V> {
-        panic!("Not implemented");
+        todo!("Implement this");
     }
 }
