@@ -1,9 +1,8 @@
 use std::fs::{self, File};
 use std::path::Path;
 use std::io::{self, Seek, Write};
-//use std::collections::hash_map;
 use std::collections::hash_map::Entry;
-//use std::fs::File;
+use std::hash::Hasher
 
 use serde::{Serialize, Deserialize};
 
@@ -11,10 +10,10 @@ use serde::{Serialize, Deserialize};
 const BUCKET_RECORDS: usize = 16;
 const SEGMENT_BUCKETS: usize = 64;
 
-pub trait Map<K, V> {
+pub trait Map<K, V, H: Hasher> {
     // get_bytes maybe returns the value associated with the key.
     fn get_bytes(&self, key: &[u8]) -> Entry<&[u8], &[u8]> {
-
+        
     }
     // put_bytes inserts a value associated with a key and returns it's
     // relative offset in the data file.
@@ -112,7 +111,7 @@ impl MehDB {
 
 }
 
-impl<K, V> Map<K, V> for MehDB {
+impl<K, V, H: Hasher> Map<K, V, H> for MehDB {
 
     fn put(&self, key: K, value: V) -> Result<u64, io::Error> {
         panic!("Not implemented");
