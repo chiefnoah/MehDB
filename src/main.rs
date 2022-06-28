@@ -1,4 +1,3 @@
-
 mod meh;
 
 use crate::meh::{Map, MehDB};
