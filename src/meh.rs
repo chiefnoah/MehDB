@@ -5,6 +5,7 @@ use std::fs::File;
 use std::hash::Hasher;
 use std::io::{self, Seek, Write};
 use std::path::Path;
+use log::{warn, info, error};
 use crate::serializer::{self, Transactor, FileTransactor};
 
 use fnv::FnvHasher;
