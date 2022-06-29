@@ -1,18 +1,16 @@
 use std::io::{self, Result};
 use std::fs::File;
-use std::time::{Instant, UNIX_EPOCH};
 use log::{info};
 use std::io::{Read, Write, Seek, SeekFrom};
-use std::time::Duration;
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub trait Serializable {
     fn pack(&self, file: Option<&File>) -> Result<DataOrOffset>;
     fn unpack(file: &File) -> Self;
 }
 
-pub struct Key(Vec<u8>);
-pub struct Value(Vec<u8>);
+pub struct ByteKey(Vec<u8>);
+pub struct ByteValue(Vec<u8>);
 
 pub enum DataOrOffset {
     Offset(u64),
@@ -20,8 +18,8 @@ pub enum DataOrOffset {
 }
 
 struct KeyValue {
-    key: Key,
-    value: Value,
+    key: ByteKey,
+    value: ByteValue,
 }
 
 pub struct Transaction {
@@ -40,7 +38,7 @@ impl Serializable for Transaction {
 }
 
 pub trait Transactor {
-    fn begin(&self, keys: &Vec<Box<Key>>) -> Transaction;
+    fn begin(&self, keys: &Vec<Box<ByteKey>>) -> Transaction;
     fn write(&self, transaction: Transaction) -> Result<u64>;
 }
 
@@ -78,7 +76,7 @@ impl FileTransactor {
 }
 
 impl Transactor for FileTransactor {
-    fn begin(&self, keys: &Vec<Box<Key>>) -> Transaction {
+    fn begin(&self, keys: &Vec<Box<ByteKey>>) -> Transaction {
         todo!("Implement this.");
     }
     fn write(&self, transaction: Transaction) -> Result<u64> {

@@ -6,27 +6,12 @@ use std::hash::Hasher;
 use std::io::{self, Seek, Write};
 use std::path::Path;
 use log::{warn, info, error};
-use crate::serializer::{self, Transactor, FileTransactor};
+use crate::serializer::{self, Serializable, Transactor, FileTransactor};
 
 use fnv::FnvHasher;
 
 const BUCKET_RECORDS: usize = 16;
 const SEGMENT_BUCKETS: usize = 64;
-
-pub trait Map<K, V, H: Hasher, T: Transactor> {
-    // get_bytes maybe returns the value associated with the key.
-    fn get_bytes(&self, key: &[u8]) -> Entry<&[u8], &[u8]> {
-        todo!("Implement this.");
-    }
-    // put_bytes inserts a value associated with a key and returns it's
-    // relative offset in the data file.
-    fn put_bytes(&self, key: &[u8], value: &[u8]) -> io::Result<u64> {
-        todo!("Implement this.");
-    }
-
-    fn put(&self, key: K, value: V) -> io::Result<u64>;
-    fn get(&self, key: K) -> Entry<K, V>;
-}
 
 // My Extendible Hash Database
 pub struct MehDB {
@@ -115,16 +100,14 @@ impl MehDB {
         })
     }
 
-    fn split_segments<K, V>(&self, hash_key: u64, offset: u64, segment_depth: u8, v: V) {}
+    fn split_segments(&self, hash_key: u64, offset: u64, segment_depth: u8, v: serializer::ByteValue) {}
 
     fn grow_directory(&self) {}
-}
 
-impl<K, V, H: Hasher, T: Transactor> Map<K, V, H, T> for MehDB {
-    fn put(&self, key: K, value: V) -> Result<u64, io::Error> {
+    fn put(&self, key: serializer::ByteKey, value: serializer::ByteValue) -> Result<u64, io::Error> {
         todo!("Implement this");
     }
-    fn get(&self, key: K) -> Entry<K, V> {
+    fn get(&self, key: serializer::ByteKey) -> Entry<serializer::ByteKey, serializer::ByteValue> {
         todo!("Implement this");
     }
 }
