@@ -1,24 +1,29 @@
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::Entry;
 use std::default::Default;
-use std::fs::{self, File};
+use std::fs::File;
 use std::hash::Hasher;
 use std::io::{self, Seek, Write};
 use std::path::Path;
+use crate::serializer::{self, Transactor, FileTransactor};
 
 use fnv::FnvHasher;
 
 const BUCKET_RECORDS: usize = 16;
 const SEGMENT_BUCKETS: usize = 64;
 
-pub trait Map<K, V, H: Hasher, S: Serializer> {
+pub trait Map<K, V, H: Hasher, T: Transactor> {
     // get_bytes maybe returns the value associated with the key.
-    fn get_bytes(&self, key: &[u8]) -> Entry<&[u8], &[u8]> {}
+    fn get_bytes(&self, key: &[u8]) -> Entry<&[u8], &[u8]> {
+        todo!("Implement this.");
+    }
     // put_bytes inserts a value associated with a key and returns it's
     // relative offset in the data file.
-    fn put_bytes(&self, key: &[u8], value: &[u8]) -> Result<u64, io::Error> {}
+    fn put_bytes(&self, key: &[u8], value: &[u8]) -> io::Result<u64> {
+        todo!("Implement this.");
+    }
 
-    fn put(&self, key: K, value: V) -> Result<u64, io::Error>;
+    fn put(&self, key: K, value: V) -> io::Result<u64>;
     fn get(&self, key: K) -> Entry<K, V>;
 }
 
@@ -27,7 +32,6 @@ pub struct MehDB {
     header: Header,
     dir_file: File,
     segment_file: File,
-    hasher: dyn Hasher,
 }
 
 const HEADER_SIZE: u64 = 16;
@@ -107,7 +111,6 @@ impl MehDB {
             },
             dir_file: dir_file,
             segment_file: segment_file,
-            hasher: FnvHasher::default(),
         })
     }
 
@@ -116,7 +119,7 @@ impl MehDB {
     fn grow_directory(&self) {}
 }
 
-impl<K, V, H: Hasher> Map<K, V, H> for MehDB {
+impl<K, V, H: Hasher, T: Transactor> Map<K, V, H, T> for MehDB {
     fn put(&self, key: K, value: V) -> Result<u64, io::Error> {
         todo!("Implement this");
     }
