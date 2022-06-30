@@ -6,7 +6,7 @@ use crate::serializer::{ByteKey, ByteValue};
 
 fn main() {
     let db: MehDB = MehDB::new(None).unwrap();
-    let key = ByteKey(vec!(b"00"));
-    let value = ByteValue(vec!(b"1"));
-    db.put(key, value);
+    let key = ByteKey(vec![0, 0]);
+    let value = ByteValue(vec![1]);
+    let _ = db.put(key, value);
 }

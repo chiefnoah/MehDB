@@ -1,16 +1,38 @@
+use std::default::Default;
 use std::io::{self, Result};
 use std::fs::File;
 use log::{info};
 use std::io::{Read, Write, Seek, SeekFrom};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-pub trait Serializable {
-    fn pack(&self, file: Option<&File>) -> Result<DataOrOffset>;
-    fn unpack(file: &File) -> Self;
+pub trait Serializable<T> {
+    fn pack(&self, file: Option<&mut File>) -> Result<DataOrOffset>;
+    fn unpack(file: &mut File) -> Result<T>;
 }
 
-pub struct ByteKey(Vec<u8>);
-pub struct ByteValue(Vec<u8>);
+pub struct ByteKey(pub Vec<u8>);
+pub struct ByteValue(pub Vec<u8>);
+
+impl Serializable<Vec<u8>> for Vec<u8> {
+    fn pack(&self, file: Option<&mut File>) -> Result<DataOrOffset> {
+        todo!("Implement this.");
+    }
+    fn unpack(file: &mut File) -> Result<Self> {
+        todo!("Implement this.");
+    }
+}
+
+impl Default for ByteKey {
+    fn default() -> Self {
+        ByteKey(Vec::new())
+    }
+}
+
+impl Default for ByteValue {
+    fn default() -> Self {
+        ByteValue(Vec::new())
+    }
+}
 
 pub enum DataOrOffset {
     Offset(u64),
@@ -27,14 +49,13 @@ pub struct Transaction {
     data: Vec<KeyValue>,
 }
 
-impl Serializable for Transaction {
-    fn pack(&self, file: Option<&File>) -> Result<DataOrOffset> {
+impl Serializable<Transaction> for Transaction {
+    fn pack(&self, file: Option<&mut File>) -> Result<DataOrOffset> {
         todo!("Implement this.");
     }
-    fn unpack(file: &File) -> Self {
+    fn unpack(file: &mut File) -> Result<Self> {
         todo!("Implement this.");
     }
-
 }
 
 pub trait Transactor {
