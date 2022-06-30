@@ -104,10 +104,10 @@ impl MehDB {
 
     fn grow_directory(&self) {}
 
-    fn put(&self, key: serializer::ByteKey, value: serializer::ByteValue) -> Result<u64, io::Error> {
+    pub fn put(&self, key: serializer::ByteKey, value: serializer::ByteValue) -> Result<u64, io::Error> {
         todo!("Implement this");
     }
-    fn get(&self, key: serializer::ByteKey) -> Entry<serializer::ByteKey, serializer::ByteValue> {
+    pub fn get(&self, key: serializer::ByteKey) -> Entry<serializer::ByteKey, serializer::ByteValue> {
         todo!("Implement this");
     }
 }

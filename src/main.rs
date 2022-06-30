@@ -1,9 +1,12 @@
 pub mod meh;
 pub mod serializer;
 
-use crate::meh::{Map, MehDB};
+use crate::meh::MehDB;
+use crate::serializer::{ByteKey, ByteValue};
 
 fn main() {
     let db: MehDB = MehDB::new(None).unwrap();
-    db.put(b"00", b"1");
+    let key = ByteKey(vec!(b"00"));
+    let value = ByteValue(vec!(b"1"));
+    db.put(key, value);
 }
