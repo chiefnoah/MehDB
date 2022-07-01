@@ -1,4 +1,5 @@
 use std::io;
+use log::{info};
 
 
 pub trait Directory<C> {
@@ -16,6 +17,7 @@ pub struct MemoryDirectoryConfig {}
 impl Directory<MemoryDirectoryConfig> for MemoryDirectory {
 
     fn init(config: Option<MemoryDirectoryConfig>) -> Self {
+        info!("Initializing new MemoryDirectory");
         MemoryDirectory { dir: Vec::with_capacity(4) }
     }
 

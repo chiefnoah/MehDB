@@ -170,13 +170,14 @@ impl MehDB {
         value: serializer::ByteValue,
     ) -> Result<u64, io::Error> {
         let hasher = HighwayHasher::new(self.hasher_key);
-        let hash_key_bytes = hasher.hash256(&key.0);
-        let hash_key: &BitSlice<u64, Lsb0> = hash_key_bytes.view_bits::<Lsb0>();
-        let (segment_index, _) = hash_key.split_at(self.header.global_depth as usize);
-        dbg!(segment_index);
-        //let segment_offset = self.directory.segment_offset(segment_index); 
+        // We only need the first u64 of the returned value because
+        // It's unlikely we have the hard drive space to support a u64 deep directory
+        // and we *definitely* don't have the RAM to.
+        let hash_key = hasher.hash256(&key.0)[0];
+        let segment_index = self.directory.segment_offset(hash_key);
 
-        Ok(0)
+
+        Ok(0)  // are we really ok though
     }
     pub fn get(
         &self,

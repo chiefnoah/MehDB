@@ -81,6 +81,7 @@ impl SimpleFileTransactor {
             file.read_exact(&mut buf[..])?;
             Duration::from_millis(u64::from_le_bytes(buf))
         } else {
+            info!("Initializing new transactor");
             let start = SystemTime::now();
             let e = start.duration_since(UNIX_EPOCH)
                 .expect("Time went backwards");
