@@ -1,4 +1,5 @@
-use crate::serializer::{self, DataOrOffset, FileTransactor, Serializable, Transactor};
+use crate::serializer::{self, DataOrOffset, SimpleFileTransactor, Serializable, Transactor};
+use crate::directory::{Directory, MemoryDirectory};
 use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::Entry;
@@ -9,7 +10,8 @@ use std::io::{self, Read, Seek, Write};
 use std::path::Path;
 use std::mem::size_of;
 
-use fnv::FnvHasher;
+use highway::{self, HighwayHasher,HighwayHash};
+use bitvec::prelude::*;
 
 const BUCKET_RECORDS: usize = 16;
 const SEGMENT_BUCKETS: usize = 64;
@@ -19,6 +21,8 @@ pub struct MehDB {
     header: Header,
     dir_file: File,
     segment_file: File,
+    hasher_key: highway::Key,
+    directory: MemoryDirectory,
 }
 
 const HEADER_SIZE: u64 = 16;
@@ -144,6 +148,8 @@ impl MehDB {
             header: header,
             dir_file: dir_file,
             segment_file: segment_file,
+            hasher_key: highway::Key([53252, 2352323, 563956259, 234832]), // TODO: change this
+            directory: MemoryDirectory::init(None),
         })
     }
 
@@ -163,7 +169,14 @@ impl MehDB {
         key: serializer::ByteKey,
         value: serializer::ByteValue,
     ) -> Result<u64, io::Error> {
-        todo!("Implement this");
+        let hasher = HighwayHasher::new(self.hasher_key);
+        let hash_key_bytes = hasher.hash256(&key.0);
+        let hash_key: &BitSlice<u64, Lsb0> = hash_key_bytes.view_bits::<Lsb0>();
+        let (segment_index, _) = hash_key.split_at(self.header.global_depth as usize);
+        dbg!(segment_index);
+        //let segment_offset = self.directory.segment_offset(segment_index); 
+
+        Ok(0)
     }
     pub fn get(
         &self,

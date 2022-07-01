@@ -63,14 +63,14 @@ pub trait Transactor {
     fn write(&self, transaction: Transaction) -> Result<u64>;
 }
 
-pub struct FileTransactor {
+pub struct SimpleFileTransactor {
     file: File,
     log_file: Option<File>,
     // The first time this transactor was used with this file
     epoch: Duration,  // Since Unix Epoch Time
 }
 
-impl FileTransactor {
+impl SimpleFileTransactor {
     pub fn init(file: File, log_file: Option<File>) -> Result<Self> {
         let mut file = file;
         file.seek(SeekFrom::Start(0))?;
@@ -88,7 +88,7 @@ impl FileTransactor {
             file.write(&b)?;
             e
         };
-        Ok(FileTransactor{
+        Ok(SimpleFileTransactor{
             file: file,
             epoch: epoch,
             log_file: log_file,
@@ -96,7 +96,7 @@ impl FileTransactor {
     }
 }
 
-impl Transactor for FileTransactor {
+impl Transactor for SimpleFileTransactor {
     fn begin(&self, keys: &Vec<Box<ByteKey>>) -> Transaction {
         todo!("Implement this.");
     }

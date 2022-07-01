@@ -1,5 +1,6 @@
 pub mod meh;
 pub mod serializer;
+pub mod directory;
 
 use crate::meh::MehDB;
 use crate::serializer::{ByteKey, ByteValue};
