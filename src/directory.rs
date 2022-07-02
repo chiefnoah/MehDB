@@ -4,7 +4,6 @@ use parking_lot::RwLock;
 
 
 pub trait Directory<C> {
-    fn init(config: Option<C>) -> Self;
     fn segment_offset(&self, i: u64) -> io::Result<u64>;
     fn set_segment_offset(&self, i: u64, offset: u64) -> io::Result<()>;
     fn grow(&mut self) -> io::Result<u64>;
@@ -16,12 +15,14 @@ pub struct MemoryDirectory {
 
 pub struct MemoryDirectoryConfig {}
 
-impl Directory<MemoryDirectoryConfig> for MemoryDirectory {
-
-    fn init(config: Option<MemoryDirectoryConfig>) -> Self {
+impl MemoryDirectory {
+    pub fn init(config: Option<MemoryDirectoryConfig>) -> Self {
         info!("Initializing new MemoryDirectory");
         MemoryDirectory { dir: RwLock::new(Vec::with_capacity(1))}
     }
+}
+
+impl Directory<MemoryDirectoryConfig> for MemoryDirectory {
 
     fn segment_offset(&self, i: u64) -> io::Result<u64> {
         let dir = self.dir.read();
