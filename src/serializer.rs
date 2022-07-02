@@ -90,9 +90,9 @@ impl SimpleFileTransactor {
             e
         };
         Ok(SimpleFileTransactor{
-            file: file,
-            epoch: epoch,
-            log_file: log_file,
+            file,
+            epoch,
+            log_file,
         })
     }
 }

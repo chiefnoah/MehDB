@@ -19,7 +19,6 @@ const SEGMENT_BUCKETS: usize = 64;
 // My Extendible Hash Database
 pub struct MehDB {
     header: Header,
-    dir_file: File,
     segment_file: File,
     hasher_key: highway::Key,
     directory: MemoryDirectory,
@@ -59,8 +58,8 @@ impl Serializable<Header> for Header {
         file.read_exact(&mut buf[..])?;
         let num_segments = u64::from_le_bytes(buf);
         Ok(Header {
-            global_depth: global_depth,
-            num_segments: num_segments,
+            global_depth,
+            num_segments,
         })
     }
 }
@@ -74,7 +73,6 @@ struct Record<K: Default, V: Default> {
 
 impl<K: Default, V: Default> Record<K, V> {
     fn pack(&self) -> [u8; 16] {
-        // I don't like that we hae to allocate here
         let mut out: [u8; 16] = [0; 16];
         out[0..8].copy_from_slice(&self.hash_key.to_le_bytes());
         out[8..].copy_from_slice(&self.offset.to_le_bytes());
@@ -114,18 +112,12 @@ impl MehDB {
             // Default to the current directory
             None => Path::new("."),
         };
-        let dir_file_path = path.join("index.dir");
         let segment_file_path = path.join("index.bin");
         let mut segment_file = if !segment_file_path.exists() {
             let f = File::create(segment_file_path);
             f
         } else {
             File::open(segment_file_path)
-        }?;
-        let dir_file = if !dir_file_path.exists() {
-            File::create(dir_file_path)
-        } else {
-            File::open(dir_file_path)
         }?;
         // Attempt to read the header from segment_file
         // otherwse, create a new header and write it
@@ -145,9 +137,8 @@ impl MehDB {
             header
         };
         Ok(MehDB {
-            header: header,
-            dir_file: dir_file,
-            segment_file: segment_file,
+            header,
+            segment_file,
             hasher_key: highway::Key([53252, 2352323, 563956259, 234832]), // TODO: change this
             directory: MemoryDirectory::init(None),
         })
@@ -159,7 +150,8 @@ impl MehDB {
         offset: u64,
         segment_depth: u8,
         v: serializer::ByteValue,
-    ) {
+    ) -> io::Result<()> {
+        Ok(())
     }
 
     fn grow_directory(&self) {}

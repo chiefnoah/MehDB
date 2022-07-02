@@ -36,6 +36,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "cache-padded"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c1db59621ec70f09c5e9b597b220c7a2b43611f4710dc03ceb8748637775692c"
+
+[[package]]
 name = "cfg-if"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -90,6 +96,7 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "bitvec",
+ "cache-padded",
  "fnv",
  "highway",
  "log",
