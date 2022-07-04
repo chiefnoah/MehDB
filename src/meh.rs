@@ -32,7 +32,7 @@ struct Header {
     num_segments: u64,
 }
 
-impl Serializable<Header> for Header {
+impl Serializable for Header {
     fn pack(&self, file: Option<&mut File>) -> io::Result<serializer::DataOrOffset> {
         let global_depth_bytes = self.global_depth.to_le_bytes();
         let num_segment_bytes = self.num_segments.to_le_bytes();
