@@ -42,7 +42,7 @@ impl Serializable for Header {
                 file.write(&global_depth_bytes)?;
                 file.write(&num_segment_bytes)?;
                 Ok(DataOrOffset::Offset(offset))
-            }
+            },
             None => {
                 let mut out = Vec::with_capacity(16);
                 out.extend_from_slice(&global_depth_bytes);
