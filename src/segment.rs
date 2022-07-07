@@ -4,6 +4,7 @@ use std::path::Path;
 use crate::serializer::{DataOrOffset, Serializable};
 use std::mem::size_of;
 use std::ops::{Index, IndexMut};
+use std::collections::HashMap;
 
 // The number of buckets in each segment.
 // This may be adapted to be parametrizable on a per-database level
@@ -58,7 +59,6 @@ impl Serializable for Header {
 pub struct Segment {
     pub depth: u64,
     pub offset: u64,
-    segmenter: *mut dyn Segmenter,
 }
 
 pub struct Bucket {
@@ -79,6 +79,7 @@ pub trait Segmenter {
     fn segment(&mut self, index: u64) -> io::Result<Segment>;
     // Creates a new segment and returns it's index.
     fn allocate_segment(&mut self, depth: u64) -> io::Result<Segment>;
+    fn allocate_with_buckets(&mut self, buckets: Vec<Bucket>, depth: u64) -> io::Result<Segment>;
     // Returns the header
     fn header(&mut self) -> io::Result<Header>;
     // Sets the global_depth
@@ -86,7 +87,7 @@ pub trait Segmenter {
     // Retrieves a bucket from segment at index
     fn bucket(&mut self, segment: &Segment, index: u64) -> io::Result<Bucket>;
     // Overwrites an existing bucket
-    fn write_bucket(&mut self, segment: &Segment, indez: u64) -> io::Result<()>;
+    fn write_bucket(&mut self, bucket: &Bucket) -> io::Result<()>;
 }
 
 // A simple, file-backed Segmenter
@@ -94,6 +95,7 @@ pub struct FileSegmenter {
     file: File,
     header: Header,
     header_dirty: bool,
+    segment_depth_cache: HashMap<u64, u64>,
 }
 
 impl FileSegmenter {
@@ -125,6 +127,7 @@ impl FileSegmenter {
             file,
             header,
             header_dirty: false,
+            segment_depth_cache: HashMap::new(),
         };
         out.allocate_segment(size_of::<Header>() as u64)?;
         Ok(out)
@@ -135,21 +138,27 @@ impl Segmenter for FileSegmenter {
 
     fn segment(&mut self, index: u64) -> io::Result<Segment> {
         let offset = index * SEGMENT_SIZE;
+        if self.segment_depth_cache.contains_key(&offset) {
+            return Ok(Segment {
+                depth: *self.segment_depth_cache.get(&offset).unwrap(),
+                offset,
+            });
+        }
         self.file.seek(io::SeekFrom::Start(offset))?;
         let mut buf: [u8; 8] = [0; 8];
         let depth = u64::from_le_bytes(buf);
         self.file.read_exact(&mut buf)?;
+        self.segment_depth_cache.insert(offset, depth);
         Ok(Segment {
             depth,
             offset,
-            segmenter: self,
         })
     }
 
     fn allocate_segment(&mut self, depth: u64) -> io::Result<Segment> {
         let offset = self.header.num_segments * SEGMENT_SIZE;
         self.file.seek(io::SeekFrom::Start(offset))?;
-        Ok(Segment{depth, offset, segmenter: self})
+        Ok(Segment{depth, offset})
     }
 
     fn header(&mut self) -> io::Result<Header> {
@@ -163,19 +172,26 @@ impl Segmenter for FileSegmenter {
         Ok(())
     }
 
-}
-
-
-impl Index<u64> for Segment {
-    type Output = Bucket;
-    fn index(&self, index: u64) -> &Self::Output {
-        let offset = index * BUCKET_SIZE;
-        let buf: [u8; BUCKET_SIZE as usize] = [0; BUCKET_SIZE as usize];
-        self.segmenter.file.seek(io::SeekFrom::Start(offset));
-        self.file.read_exact(&buf);
-        &Bucket{iter_index: 0, offset, buf}
+    fn bucket(&mut self, segment: &Segment, index: u64) -> io::Result<Bucket> {
+        let offset = segment.offset + (index * BUCKET_SIZE);
+        self.file.seek(io::SeekFrom::Start(offset))?;
+        let mut buf: [u8; BUCKET_SIZE as usize] = [0; BUCKET_SIZE as usize];
+        self.file.read_exact(&mut buf)?;
+        Ok(Bucket {
+            iter_index: 0,
+            offset,
+            buf
+        })
     }
+
+    fn write_bucket(&mut self, bucket: &Bucket) -> io::Result<()> {
+        self.file.seek(io::SeekFrom::Start(bucket.offset))?;
+        self.file.write(&bucket.buf)?;
+        Ok(())
+    }
+
 }
+
 
 impl Iterator for Bucket {
     type Item = Record;
