@@ -9,6 +9,7 @@ use std::hash::Hasher;
 use std::io::{self, Read, Seek, Write};
 use std::path::Path;
 use std::mem::size_of;
+use crate::segment::{self, FileSegmenter, Segmenter};
 
 use highway::{self, HighwayHasher,HighwayHash};
 use bitvec::prelude::*;
@@ -18,10 +19,10 @@ const SEGMENT_BUCKETS: usize = 64;
 
 // My Extendible Hash Database
 pub struct MehDB {
-    header: Header,
-    segment_file: File,
     hasher_key: highway::Key,
     directory: MemoryDirectory,
+    segmenter: FileSegmenter,
+    //transactor: SimpleFileTransactor,
 }
 
 const HEADER_SIZE: u64 = 16;
@@ -106,13 +107,13 @@ fn initialize_segment(
 
 impl MehDB {
     // New creates a new instance of MehDB with it's data in optional path.
-    pub fn new(path: Option<&Path>) -> Result<Self, io::Error> {
+    pub fn init(path: Option<&Path>) -> Result<Self, io::Error> {
         let path: &Path = match path {
             Some(path) => path,
             // Default to the current directory
             None => Path::new("."),
         };
-        let segment_file_path = path.join("index.bin");
+        let segment_file_path = path.join("segments.bin");
         let mut segment_file = if !segment_file_path.exists() {
             let f = File::create(segment_file_path);
             f
@@ -137,10 +138,9 @@ impl MehDB {
             header
         };
         Ok(MehDB {
-            header,
-            segment_file,
             hasher_key: highway::Key([53252, 2352323, 563956259, 234832]), // TODO: change this
             directory: MemoryDirectory::init(None),
+            segmenter: FileSegmenter::init(Some(&segment_file_path)).unwrap(),
         })
     }
 
@@ -166,8 +166,8 @@ impl MehDB {
         // It's unlikely we have the hard drive space to support a u64 deep directory
         // and we *definitely* don't have the RAM to.
         let hash_key = hasher.hash256(&key.0)[0];
-        let segment_index = self.directory.segment_offset(hash_key);
-
+        let segment_index = self.directory.segment_offset(hash_key)?;
+        let segment = self.segmenter.segment(segment_index)?;
 
         Ok(0)  // are we really ok though
     }
