@@ -1,4 +1,4 @@
-use std::io::{self, Seek, Read, Write};
+use std::io::{self, Seek, Read, Write, BufWriter};
 use std::fs::File;
 use std::path::Path;
 use crate::serializer::{DataOrOffset, Serializable};
@@ -24,24 +24,14 @@ pub struct Header {
     num_segments: u64,
 }
 
-impl Serializable for Header {
-    fn pack(&self, file: Option<&mut File>) -> io::Result<DataOrOffset> {
+impl Serializable<File, File> for Header {
+    fn pack(&self, file: &mut File) -> io::Result<u64> {
         let global_depth_bytes = self.global_depth.to_le_bytes();
         let num_segment_bytes = self.num_segments.to_le_bytes();
-        match file {
-            Some(file) => {
-                let offset = file.seek(io::SeekFrom::Current(0)).unwrap();
-                file.write(&global_depth_bytes)?;
-                file.write(&num_segment_bytes)?;
-                Ok(DataOrOffset::Offset(offset))
-            }
-            None => {
-                let mut out = Vec::with_capacity(16);
-                out.extend_from_slice(&global_depth_bytes);
-                out.extend_from_slice(&num_segment_bytes);
-                Ok(DataOrOffset::Data(out))
-            }
-        }
+        let offset = file.seek(io::SeekFrom::Current(0)).unwrap();
+        file.write(&global_depth_bytes)?;
+        file.write(&num_segment_bytes)?;
+        Ok(offset)
     }
     fn unpack(file: &mut File) -> io::Result<Self> {
         let mut buf: [u8; 8] = [0; 8];
@@ -59,6 +49,25 @@ impl Serializable for Header {
 pub struct Segment {
     pub depth: u64,
     pub offset: u64,
+}
+
+impl Serializable<File, File> for Segment {
+    fn pack(&self, buffer: &mut File) -> io::Result<u64> {
+        let offset = buffer.seek(io::SeekFrom::Current(0))?;
+        buffer.write(&self.depth.to_le_bytes())?;
+        Ok(offset)
+    }
+
+    fn unpack(buffer: &mut File) -> io::Result<Self> {
+        let offset = buffer.seek(io::SeekFrom::Current(0))?;
+        let mut b: [u8; 8] = [0; 8];
+        buffer.read_exact(&mut b)?;
+        let depth = u64::from_le_bytes(b);
+        Ok(Self {
+            offset,
+            depth,
+        })
+    }
 }
 
 pub struct Bucket {
@@ -79,6 +88,7 @@ pub trait Segmenter {
     fn segment(&mut self, index: u64) -> io::Result<Segment>;
     // Creates a new segment and returns it's index.
     fn allocate_segment(&mut self, depth: u64) -> io::Result<Segment>;
+    // Creates a new segment, filling it iwth buckets
     fn allocate_with_buckets(&mut self, buckets: Vec<Bucket>, depth: u64) -> io::Result<Segment>;
     // Returns the header
     fn header(&mut self) -> io::Result<Header>;
@@ -118,7 +128,7 @@ impl FileSegmenter {
                 global_depth: 0,
                 num_segments: 1,
             };
-            header.pack(Some(&mut file))?;
+            header.pack(&mut file)?;
             //Initialize the first segment
             // Initialize the directory
             header
@@ -161,6 +171,23 @@ impl Segmenter for FileSegmenter {
         Ok(Segment{depth, offset})
     }
 
+    fn allocate_with_buckets(&mut self, buckets: Vec<Bucket>, depth: u64) -> io::Result<Segment> {
+        // The number of buckets passed in *must* be the entire segment's buckets
+        assert!(buckets.len() as u64 == BUCKETS_PER_SEGMENT);
+        let offset = self.header.num_segments * SEGMENT_SIZE;
+        let mut buffer = BufWriter::with_capacity(SEGMENT_SIZE as usize + size_of::<Header>(), &mut self.file);
+        buffer.seek(io::SeekFrom::Start(offset))?;
+
+        todo!("Flush the buckets to the buffer!");
+        //for bucket in buckets.iter() {
+        //    buffer.write
+        //}
+        Ok(Segment {
+            offset,
+            depth,
+        })
+    }
+
     fn header(&mut self) -> io::Result<Header> {
         self.file.seek(io::SeekFrom::Start(0))?;
         Header::unpack(&mut self.file)
@@ -168,7 +195,7 @@ impl Segmenter for FileSegmenter {
 
     fn sync_header(&mut self) -> io::Result<()> {
         self.file.seek(io::SeekFrom::Start(0))?;
-        self.header.pack(Some(& mut self.file))?;
+        self.header.pack(& mut self.file)?;
         Ok(())
     }
 

@@ -1,18 +1,18 @@
-use crate::serializer::{self, DataOrOffset, SimpleFileTransactor, Serializable, Transactor};
 use crate::directory::{Directory, MemoryDirectory};
+use crate::segment::{self, FileSegmenter, Segmenter};
+use crate::serializer::{self, DataOrOffset, Serializable, SimpleFileTransactor, Transactor};
 use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::Entry;
 use std::default::Default;
-use std::fs::File;
 use std::hash::Hasher;
 use std::io::{self, Read, Seek, Write};
-use std::path::Path;
+use std::fs::File;
 use std::mem::size_of;
-use crate::segment::{self, FileSegmenter, Segmenter};
+use std::path::Path;
 
-use highway::{self, HighwayHasher,HighwayHash};
 use bitvec::prelude::*;
+use highway::{self, HighwayHash, HighwayHasher};
 
 const BUCKET_RECORDS: usize = 16;
 const SEGMENT_BUCKETS: usize = 64;
@@ -33,24 +33,14 @@ struct Header {
     num_segments: u64,
 }
 
-impl Serializable for Header {
-    fn pack(&self, file: Option<&mut File>) -> io::Result<serializer::DataOrOffset> {
+impl Serializable<File, File> for Header {
+    fn pack(&self, file: &mut File) -> io::Result<u64> {
         let global_depth_bytes = self.global_depth.to_le_bytes();
         let num_segment_bytes = self.num_segments.to_le_bytes();
-        match file {
-            Some(file) => {
-                let offset = file.seek(io::SeekFrom::Current(0)).unwrap();
-                file.write(&global_depth_bytes)?;
-                file.write(&num_segment_bytes)?;
-                Ok(DataOrOffset::Offset(offset))
-            },
-            None => {
-                let mut out = Vec::with_capacity(16);
-                out.extend_from_slice(&global_depth_bytes);
-                out.extend_from_slice(&num_segment_bytes);
-                Ok(DataOrOffset::Data(out))
-            }
-        }
+        let offset = file.seek(io::SeekFrom::Current(0)).unwrap();
+        file.write(&global_depth_bytes)?;
+        file.write(&num_segment_bytes)?;
+        Ok(offset)
     }
     fn unpack(file: &mut File) -> io::Result<Self> {
         let mut buf: [u8; 8] = [0; 8];
@@ -86,10 +76,7 @@ struct Bucket<K: Default, V: Default> {
     records: [Record<K, V>; BUCKET_RECORDS],
 }
 
-fn initialize_segment(
-    segment_file: &mut File,
-    from_offset: Option<u64>,
-) -> Result<(), io::Error> {
+fn initialize_segment(segment_file: &mut File, from_offset: Option<u64>) -> Result<(), io::Error> {
     segment_file.seek(io::SeekFrom::Start(HEADER_SIZE))?;
     for _ in 0..SEGMENT_BUCKETS {
         for _ in 0..BUCKET_RECORDS {
@@ -114,29 +101,6 @@ impl MehDB {
             None => Path::new("."),
         };
         let segment_file_path = path.join("segments.bin");
-        let mut segment_file = if !segment_file_path.exists() {
-            let f = File::create(segment_file_path);
-            f
-        } else {
-            File::open(segment_file_path)
-        }?;
-        // Attempt to read the header from segment_file
-        // otherwse, create a new header and write it
-        segment_file.seek(io::SeekFrom::Start(0))?;
-        let segment_metadata = segment_file.metadata()?;
-        let header = if segment_metadata.len() > 16 {
-            Header::unpack(&mut segment_file)?
-        } else {
-            let header = Header {
-                global_depth: 0,
-                num_segments: 1,
-            };
-            header.pack(Some(&mut segment_file))?;
-            //Initialize the first segment
-            initialize_segment(&mut segment_file, Some(size_of::<Header>() as u64))?;
-            // Initialize the directory
-            header
-        };
         Ok(MehDB {
             hasher_key: highway::Key([53252, 2352323, 563956259, 234832]), // TODO: change this
             directory: MemoryDirectory::init(None),
@@ -157,7 +121,7 @@ impl MehDB {
     fn grow_directory(&self) {}
 
     pub fn put(
-        &self,
+        &mut self,
         key: serializer::ByteKey,
         value: serializer::ByteValue,
     ) -> Result<u64, io::Error> {
@@ -169,7 +133,7 @@ impl MehDB {
         let segment_index = self.directory.segment_offset(hash_key)?;
         let segment = self.segmenter.segment(segment_index)?;
 
-        Ok(0)  // are we really ok though
+        Ok(0) // are we really ok though
     }
     pub fn get(
         &self,
