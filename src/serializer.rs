@@ -1,8 +1,8 @@
+use log::info;
 use std::default::Default;
-use std::io::{self, Result};
 use std::fs::File;
-use log::{info};
-use std::io::{Read, Write, Seek, SeekFrom};
+use std::io::{self, Result};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub trait Serializable<W: Write + Seek, R: Read + Seek>: Sized {
@@ -59,7 +59,7 @@ pub struct SimpleFileTransactor {
     file: File,
     log_file: Option<File>,
     // The first time this transactor was used with this file
-    epoch: Duration,  // Since Unix Epoch Time
+    epoch: Duration, // Since Unix Epoch Time
 }
 
 impl SimpleFileTransactor {
@@ -75,13 +75,14 @@ impl SimpleFileTransactor {
         } else {
             info!("Initializing new transactor");
             let start = SystemTime::now();
-            let e = start.duration_since(UNIX_EPOCH)
+            let e = start
+                .duration_since(UNIX_EPOCH)
                 .expect("Time went backwards");
             let b = u64::try_from(e.as_millis()).unwrap().to_le_bytes();
             file.write(&b)?;
             e
         };
-        Ok(SimpleFileTransactor{
+        Ok(SimpleFileTransactor {
             file,
             epoch,
             log_file,

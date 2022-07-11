@@ -5,9 +5,9 @@ use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::Entry;
 use std::default::Default;
+use std::fs::File;
 use std::hash::Hasher;
 use std::io::{self, Read, Seek, Write};
-use std::fs::File;
 use std::mem::size_of;
 use std::path::Path;
 
@@ -47,7 +47,7 @@ impl MehDB {
         &mut self,
         key: serializer::ByteKey,
         value: serializer::ByteValue,
-    ) -> Result<u64, io::Error> {
+    ) -> Result<(), io::Error> {
         let hasher = HighwayHasher::new(self.hasher_key);
         // We only need the first u64 of the returned value because
         // It's unlikely we have the hard drive space to support a u64 deep directory
@@ -58,10 +58,12 @@ impl MehDB {
         let segment_index = self.directory.segment_offset(msb_hash_key)?;
         let segment = self.segmenter.segment(segment_index)?;
         let bucket_index = 255 & hash_key[1];
-        let bucket = self.segmenter.bucket(&segment, bucket_index)?;
-        let overflow = bucket.put(&hash_key);
-        
-        todo!("Finish implementing this.");
+        let mut bucket = self.segmenter.bucket(&segment, bucket_index)?;
+        let overflow = bucket.put(msb_hash_key, 1234, segment.depth);
+        match overflow {
+            Err(e) => Err(io::Error::new(io::ErrorKind::AlreadyExists, e)),
+            _ => Ok(()),
+        }
     }
     pub fn get(
         &self,

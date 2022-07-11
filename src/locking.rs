@@ -1,10 +1,9 @@
-use std::hash::{Hasher, BuildHasher};
-use std::default::Default;
-use std::collections::hash_map::{RandomState, DefaultHasher};
 use crate::serializer::Serializable;
-use parking_lot::RwLock;
 use cache_padded::CachePadded;
-
+use parking_lot::RwLock;
+use std::collections::hash_map::{DefaultHasher, RandomState};
+use std::default::Default;
+use std::hash::{BuildHasher, Hasher};
 
 pub struct StripedLock {
     locks: Vec<CachePadded<RwLock<()>>>,
@@ -29,5 +28,4 @@ impl StripedLock {
         let cached_lock = &self.locks.get(hash_key as usize % &len)?;
         Some(&cached_lock)
     }
-
 }

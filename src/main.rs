@@ -2,10 +2,10 @@
 #![allow(unused_variables)]
 #![allow(unused_imports)]
 
-pub mod meh;
-pub mod serializer;
 pub mod directory;
+pub mod meh;
 pub mod segment;
+pub mod serializer;
 
 use crate::meh::MehDB;
 use crate::serializer::{ByteKey, ByteValue};
@@ -18,7 +18,7 @@ fn main() {
     for i in 0..100000 {
         let i = i as u64;
         let key = ByteKey(i.to_le_bytes().to_vec());
-        let value = ByteValue((i*2).to_le_bytes().to_vec());
+        let value = ByteValue((i * 2).to_le_bytes().to_vec());
         db.put(key, value).unwrap();
     }
 }
