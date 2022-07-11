@@ -55,13 +55,19 @@ impl MehDB {
         // TODO: support the full 256 bit keyspace for magical distributed system support
         let hash_key = hasher.hash256(&key.0);
         let msb_hash_key = hash_key[0];
+        info!("msb_hash_key: {}", msb_hash_key);
         let segment_index = self.directory.segment_offset(msb_hash_key)?;
+        info!("Segment index {}", segment_index);
         let segment = self.segmenter.segment(segment_index)?;
         let bucket_index = 255 & hash_key[1];
+        info!("Bucket index: {}", bucket_index);
         let mut bucket = self.segmenter.bucket(&segment, bucket_index)?;
         let overflow = bucket.put(msb_hash_key, 1234, segment.depth);
         match overflow {
-            Err(e) => Err(io::Error::new(io::ErrorKind::AlreadyExists, e)),
+            Err(e) => {
+                warn!("Bucket overflowed. Allocating new segment and splitting.");
+                Err(io::Error::new(io::ErrorKind::AlreadyExists, e))
+            },
             _ => Ok(()),
         }
     }

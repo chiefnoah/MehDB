@@ -193,6 +193,7 @@ impl FileSegmenter {
             File::open(path)
         }?;
         let segment_metadata = file.metadata()?;
+        let mut first_time = false;
         let header = if segment_metadata.len() >= size_of::<Header>() as u64 {
             <Header as Serializable<File, File>>::unpack(&mut file)?
         } else {
@@ -201,7 +202,8 @@ impl FileSegmenter {
                 num_segments: 1,
             };
             header.pack(&mut file)?;
-            //Initialize the first segment
+            //Set flag to initialize the first segment
+            first_time = true;
             // Initialize the directory
             header
         };
@@ -211,7 +213,7 @@ impl FileSegmenter {
             header_dirty: false,
             segment_depth_cache: HashMap::new(),
         };
-        out.allocate_segment(size_of::<Header>() as u64)?;
+        if first_time { out.allocate_segment(size_of::<Header>() as u64)?; }
         Ok(out)
     }
 }
@@ -236,6 +238,10 @@ impl Segmenter for FileSegmenter {
     fn allocate_segment(&mut self, depth: u64) -> io::Result<Segment> {
         let offset = self.header.num_segments * SEGMENT_SIZE;
         self.file.seek(io::SeekFrom::Start(offset))?;
+        const SIZE: usize = SEGMENT_SIZE as usize + 8;
+        let mut buf: [u8; SIZE] = [0; SIZE];
+        buf[..8].copy_from_slice(&depth.to_le_bytes());
+        self.file.write(&buf)?;
         Ok(Segment { depth, offset })
     }
 
