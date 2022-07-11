@@ -24,15 +24,16 @@ pub struct Header {
     num_segments: u64,
 }
 
-impl Serializable<File, File> for Header {
-    fn pack(&self, file: &mut File) -> io::Result<u64> {
+impl<W: Seek + Write> Serializable<W, File> for Header {
+    fn pack(&self, buffer: &mut W) -> io::Result<u64> {
         let global_depth_bytes = self.global_depth.to_le_bytes();
         let num_segment_bytes = self.num_segments.to_le_bytes();
-        let offset = file.seek(io::SeekFrom::Current(0)).unwrap();
-        file.write(&global_depth_bytes)?;
-        file.write(&num_segment_bytes)?;
+        let offset = buffer.seek(io::SeekFrom::Current(0)).unwrap();
+        buffer.write(&global_depth_bytes)?;
+        buffer.write(&num_segment_bytes)?;
         Ok(offset)
     }
+
     fn unpack(file: &mut File) -> io::Result<Self> {
         let mut buf: [u8; 8] = [0; 8];
         file.read_exact(&mut buf[..])?;
@@ -76,10 +77,76 @@ pub struct Bucket {
     buf: [u8; BUCKET_SIZE as usize],
 }
 
+impl<'a> Bucket {
+
+    fn get(&self, hk: u64) -> Option<Record> {
+        for record in self.iter() {
+            if record.hash_key == hk {
+                return Some(record);
+            }
+        }
+        None
+    }
+
+    pub fn put(&mut self, hk: u64, value: u64) -> io::Result<u8> {
+        todo!("Implement this.");
+    }
+
+    fn iter(&self) -> BucketIter {
+        BucketIter{index: 0, bucket: &self}
+    }
+}
+
+impl Index<usize> for Bucket {
+    type Output = Record;
+    fn index(&self, index: usize) -> &Self::Output {
+        let offset = index * size_of::<Record>();
+        let buf: [u8; 8] = [0; 8];
+        self.buf[offset..8].copy_from_slice(&buf);
+        let hash_key = u64::from_le_bytes(buf);
+        self.buf[offset + 8..8].copy_from_slice(&buf);
+        let value = u64::from_le_bytes(buf);
+        &Record {hash_key, value}
+    }
+}
+
+impl<'a, W: Seek + Write> Serializable<W, File> for Bucket {
+    fn pack(&self, buffer: &mut W) -> io::Result<u64> {
+        let offset = buffer.seek(io::SeekFrom::Current(0)).unwrap();
+        buffer.write(&self.buf)?;
+        Ok(offset)
+    }
+
+    fn unpack(buffer: &mut File) -> io::Result<Self> {
+        let offset = buffer.seek(io::SeekFrom::Current(0)).unwrap();
+        let mut bucket = Self{iter_index: 0, offset, buf: [0; BUCKET_SIZE as usize]};
+        buffer.read_exact(&mut bucket.buf)?;
+        Ok(bucket)
+    }
+}
+
+struct BucketIter<'b> {
+    index: u64,
+    bucket: &'b Bucket,
+}
+
+impl<'b> Iterator for BucketIter<'b> {
+    type Item = Record;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index >= BUCKET_RECORDS {
+            return None;
+        }
+        Some(self.bucket[self.index as usize])
+    }
+
+}
+
+
+
 pub struct Record {
     pub hash_key: u64,
     pub value: u64,
-    index: u64
 }
 
 // A Segmenter is a something responsible for allocating and reading segments
@@ -122,7 +189,7 @@ impl FileSegmenter {
         }?;
         let segment_metadata = file.metadata()?;
         let header = if segment_metadata.len() >= size_of::<Header>() as u64 {
-            Header::unpack(&mut file)?
+            <Header as Serializable<File, File>>::unpack(&mut file)?
         } else {
             let header = Header {
                 global_depth: 0,
@@ -177,11 +244,10 @@ impl Segmenter for FileSegmenter {
         let offset = self.header.num_segments * SEGMENT_SIZE;
         let mut buffer = BufWriter::with_capacity(SEGMENT_SIZE as usize + size_of::<Header>(), &mut self.file);
         buffer.seek(io::SeekFrom::Start(offset))?;
-
-        todo!("Flush the buckets to the buffer!");
-        //for bucket in buckets.iter() {
-        //    buffer.write
-        //}
+        self.header.pack(&mut buffer)?;
+        for bucket in buckets.iter() {
+            bucket.pack(&mut buffer)?;
+        }
         Ok(Segment {
             offset,
             depth,
@@ -190,7 +256,7 @@ impl Segmenter for FileSegmenter {
 
     fn header(&mut self) -> io::Result<Header> {
         self.file.seek(io::SeekFrom::Start(0))?;
-        Header::unpack(&mut self.file)
+        <Header as Serializable<File, File>>::unpack(&mut self.file)
     }
 
     fn sync_header(&mut self) -> io::Result<()> {
@@ -220,16 +286,3 @@ impl Segmenter for FileSegmenter {
 }
 
 
-impl Iterator for Bucket {
-    type Item = Record;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.iter_index >= BUCKET_RECORDS {
-            return None;
-        }
-        let offset = self.offset + (size_of::<Record>() as u64 * self.iter_index);
-
-        None
-    }
-
-}

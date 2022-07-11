@@ -27,71 +27,6 @@ pub struct MehDB {
 
 const HEADER_SIZE: u64 = 16;
 
-#[derive(Serialize, Deserialize)]
-struct Header {
-    global_depth: u64,
-    num_segments: u64,
-}
-
-impl Serializable<File, File> for Header {
-    fn pack(&self, file: &mut File) -> io::Result<u64> {
-        let global_depth_bytes = self.global_depth.to_le_bytes();
-        let num_segment_bytes = self.num_segments.to_le_bytes();
-        let offset = file.seek(io::SeekFrom::Current(0)).unwrap();
-        file.write(&global_depth_bytes)?;
-        file.write(&num_segment_bytes)?;
-        Ok(offset)
-    }
-    fn unpack(file: &mut File) -> io::Result<Self> {
-        let mut buf: [u8; 8] = [0; 8];
-        file.read_exact(&mut buf[..])?;
-        let global_depth = u64::from_le_bytes(buf);
-        file.read_exact(&mut buf[..])?;
-        let num_segments = u64::from_le_bytes(buf);
-        Ok(Header {
-            global_depth,
-            num_segments,
-        })
-    }
-}
-
-struct Record<K: Default, V: Default> {
-    hash_key: u64,
-    key: K,
-    value: V,
-    offset: u64,
-}
-
-impl<K: Default, V: Default> Record<K, V> {
-    fn pack(&self) -> [u8; 16] {
-        let mut out: [u8; 16] = [0; 16];
-        out[0..8].copy_from_slice(&self.hash_key.to_le_bytes());
-        out[8..].copy_from_slice(&self.offset.to_le_bytes());
-        out
-    }
-}
-
-// Bucket
-struct Bucket<K: Default, V: Default> {
-    records: [Record<K, V>; BUCKET_RECORDS],
-}
-
-fn initialize_segment(segment_file: &mut File, from_offset: Option<u64>) -> Result<(), io::Error> {
-    segment_file.seek(io::SeekFrom::Start(HEADER_SIZE))?;
-    for _ in 0..SEGMENT_BUCKETS {
-        for _ in 0..BUCKET_RECORDS {
-            let r: Record<serializer::ByteKey, serializer::ByteValue> = Record {
-                hash_key: 0,
-                offset: HEADER_SIZE,
-                key: Default::default(),
-                value: Default::default(),
-            };
-            segment_file.write(&r.pack())?;
-        }
-    }
-    return Ok(());
-}
-
 impl MehDB {
     // New creates a new instance of MehDB with it's data in optional path.
     pub fn init(path: Option<&Path>) -> Result<Self, io::Error> {
@@ -108,18 +43,6 @@ impl MehDB {
         })
     }
 
-    fn split_segments(
-        &self,
-        hash_key: u64,
-        offset: u64,
-        segment_depth: u8,
-        v: serializer::ByteValue,
-    ) -> io::Result<()> {
-        Ok(())
-    }
-
-    fn grow_directory(&self) {}
-
     pub fn put(
         &mut self,
         key: serializer::ByteKey,
@@ -129,11 +52,16 @@ impl MehDB {
         // We only need the first u64 of the returned value because
         // It's unlikely we have the hard drive space to support a u64 deep directory
         // and we *definitely* don't have the RAM to.
-        let hash_key = hasher.hash256(&key.0)[0];
-        let segment_index = self.directory.segment_offset(hash_key)?;
+        // TODO: support the full 256 bit keyspace for magical distributed system support
+        let hash_key = hasher.hash256(&key.0);
+        let msb_hash_key = hash_key[0];
+        let segment_index = self.directory.segment_offset(msb_hash_key)?;
         let segment = self.segmenter.segment(segment_index)?;
-
-        Ok(0) // are we really ok though
+        let bucket_index = 255 & hash_key[1];
+        let bucket = self.segmenter.bucket(&segment, bucket_index)?;
+        let overflow = bucket.put(&hash_key);
+        
+        todo!("Finish implementing this.");
     }
     pub fn get(
         &self,
