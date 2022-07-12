@@ -6,6 +6,7 @@ use std::io::{self, BufWriter, Read, Seek, Write};
 use std::mem::size_of;
 use std::ops::{Index, IndexMut};
 use std::path::Path;
+use log::info;
 
 // The number of buckets in each segment.
 // This may be adapted to be parametrizable on a per-database level
@@ -17,7 +18,7 @@ const BUCKET_RECORDS: u64 = 16;
 
 const BUCKET_SIZE: u64 = size_of::<Record>() as u64 * BUCKET_RECORDS;
 // The size on-disk of a segment
-const SEGMENT_SIZE: u64 = BUCKET_SIZE * BUCKETS_PER_SEGMENT;
+const SEGMENT_SIZE: u64 = (BUCKET_SIZE * BUCKETS_PER_SEGMENT) + 8;
 
 pub struct Header {
     global_depth: u64,
@@ -69,7 +70,6 @@ impl Serializable<File, File> for Segment {
 }
 
 pub struct Bucket {
-    iter_index: u64,
     offset: u64,
     buf: [u8; BUCKET_SIZE as usize],
 }
@@ -88,8 +88,8 @@ impl<'a> Bucket {
         for (i, record) in self.iter().enumerate() {
             if record.hash_key >> local_depth & hk >> local_depth != hk >> local_depth {
                 let offset = i * size_of::<Record>();
-                self.buf[offset..8].copy_from_slice(&hk.to_le_bytes());
-                self.buf[offset + 8..8].copy_from_slice(&value.to_le_bytes());
+                self.buf[offset..offset+8].copy_from_slice(&hk.to_le_bytes());
+                self.buf[offset + 8..offset+16].copy_from_slice(&value.to_le_bytes());
                 return Ok(offset);
             }
         }
@@ -106,9 +106,9 @@ impl<'a> Bucket {
     fn at(&self, index: usize) -> Record {
         let offset = index * size_of::<Record>();
         let mut buf: [u8; 8] = [0; 8];
-        buf.copy_from_slice(&self.buf[offset..8]);
+        buf.copy_from_slice(&self.buf[offset..offset+8]);
         let hash_key = u64::from_le_bytes(buf);
-        buf.copy_from_slice(&self.buf[offset + 8..8]);
+        buf.copy_from_slice(&self.buf[offset + 8..offset + 16]);
         let value = u64::from_le_bytes(buf);
         Record { hash_key, value }
     }
@@ -124,7 +124,6 @@ impl<'a, W: Seek + Write> Serializable<W, File> for Bucket {
     fn unpack(buffer: &mut File) -> io::Result<Self> {
         let offset = buffer.seek(io::SeekFrom::Current(0)).unwrap();
         let mut bucket = Self {
-            iter_index: 0,
             offset,
             buf: [0; BUCKET_SIZE as usize],
         };
@@ -238,7 +237,7 @@ impl Segmenter for FileSegmenter {
     fn allocate_segment(&mut self, depth: u64) -> io::Result<Segment> {
         let offset = self.header.num_segments * SEGMENT_SIZE;
         self.file.seek(io::SeekFrom::Start(offset))?;
-        const SIZE: usize = SEGMENT_SIZE as usize + 8;
+        const SIZE: usize = SEGMENT_SIZE as usize;
         let mut buf: [u8; SIZE] = [0; SIZE];
         buf[..8].copy_from_slice(&depth.to_le_bytes());
         self.file.write(&buf)?;
@@ -248,9 +247,9 @@ impl Segmenter for FileSegmenter {
     fn allocate_with_buckets(&mut self, buckets: Vec<Bucket>, depth: u64) -> io::Result<Segment> {
         // The number of buckets passed in *must* be the entire segment's buckets
         assert!(buckets.len() as u64 == BUCKETS_PER_SEGMENT);
-        let offset = self.header.num_segments * SEGMENT_SIZE;
+        let offset = (self.header.num_segments * SEGMENT_SIZE) + size_of::<Header>() as u64;
         let mut buffer =
-            BufWriter::with_capacity(SEGMENT_SIZE as usize + size_of::<Header>(), &mut self.file);
+            BufWriter::with_capacity(SEGMENT_SIZE as usize, &mut self.file);
         buffer.seek(io::SeekFrom::Start(offset))?;
         self.header.pack(&mut buffer)?;
         for bucket in buckets.iter() {
@@ -273,10 +272,10 @@ impl Segmenter for FileSegmenter {
     fn bucket(&mut self, segment: &Segment, index: u64) -> io::Result<Bucket> {
         let offset = segment.offset + (index * BUCKET_SIZE);
         self.file.seek(io::SeekFrom::Start(offset))?;
+        info!("Reading bucket at offset {}", offset);
         let mut buf: [u8; BUCKET_SIZE as usize] = [0; BUCKET_SIZE as usize];
         self.file.read_exact(&mut buf)?;
         Ok(Bucket {
-            iter_index: 0,
             offset,
             buf,
         })

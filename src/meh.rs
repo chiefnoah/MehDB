@@ -36,11 +36,13 @@ impl MehDB {
             None => Path::new("."),
         };
         let segment_file_path = path.join("segments.bin");
-        Ok(MehDB {
+        let mut segmenter = FileSegmenter::init(Some(&segment_file_path)).unwrap();
+        let mehdb = MehDB {
             hasher_key: highway::Key([53252, 2352323, 563956259, 234832]), // TODO: change this
-            directory: MemoryDirectory::init(None),
-            segmenter: FileSegmenter::init(Some(&segment_file_path)).unwrap(),
-        })
+            directory: MemoryDirectory::init(None, segmenter.segment(0)?.offset),
+            segmenter,
+        };
+        Ok(mehdb)
     }
 
     pub fn put(
