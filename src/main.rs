@@ -21,6 +21,12 @@ fn main() {
         let i = i as u64;
         let key = ByteKey(i.to_le_bytes().to_vec());
         let value = ByteValue((i * 2).to_le_bytes().to_vec());
-        db.put(key, value).unwrap();
+        match db.put(key, value) {
+            Ok(()) => return,
+            Err(e) => {
+                println!("Error: {}", e);
+                panic!("Error");
+            },
+        }
     }
 }

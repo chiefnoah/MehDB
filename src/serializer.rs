@@ -5,10 +5,10 @@ use std::io::{self, Result};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-pub trait Serializable<W: Write + Seek, R: Read + Seek>: Sized {
+pub trait Serializable: Sized {
     // TODO: no more Option or tagged result
-    fn pack(&self, file: &mut W) -> io::Result<u64>;
-    fn unpack(buffer: &mut R) -> Result<Self>;
+    fn pack<W: Write + Seek>(&self, file: &mut W) -> io::Result<u64>;
+    fn unpack<R: Read + Seek>(buffer: &mut R) -> Result<Self>;
 }
 
 pub struct ByteKey(pub Vec<u8>);
@@ -41,11 +41,11 @@ pub struct Transaction {
     data: Vec<KeyValue>,
 }
 
-impl Serializable<File, File> for Transaction {
-    fn pack(&self, file: &mut File) -> io::Result<u64> {
+impl Serializable for Transaction {
+    fn pack<File>(&self, file: &mut File) -> io::Result<u64> {
         todo!("Implement this.");
     }
-    fn unpack(file: &mut File) -> io::Result<Self> {
+    fn unpack<File>(file: &mut File) -> io::Result<Self> {
         todo!("Implement this.");
     }
 }
