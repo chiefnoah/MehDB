@@ -19,7 +19,7 @@ pub struct Bucket {
 
 impl Serializable for Bucket {
     fn pack<W: Write + Seek>(&self, buffer: &mut W) -> io::Result<u64> {
-        let offset = buffer.seek(io::SeekFrom::Current(0)).unwrap();
+        let offset = buffer.seek(io::SeekFrom::Start(self.offset)).unwrap();
         buffer.write(&self.buf)?;
         Ok(offset)
     }
@@ -88,5 +88,29 @@ impl<'b> Iterator for BucketIter<'b> {
             return None;
         }
         Some(self.bucket.at(self.index as usize))
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use io::{self, Read, Write, Cursor, Seek};
+    
+    #[test]
+    fn test_bucket_pack() {
+        let mut bucket = Bucket {offset: 5, buf: [0; BUCKET_SIZE]};
+        // change this so we have something to check for
+        bucket.buf[0] = 255;
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let res = bucket.pack::<Cursor<Vec<u8>>>(&mut buf);
+        let res = match bucket.pack::<Cursor<Vec<u8>>>(&mut buf) {
+            Err(e) => panic!("Unable to pack bucket: {}", e),
+            Ok(r) => r,
+        };
+        let mut expected_buf: [u8; BUCKET_SIZE + 5] = [0; BUCKET_SIZE + 5];
+        expected_buf[5] = 255;
+        let inner_buf = buf.into_inner();
+        assert_eq!(&inner_buf.len(), &(BUCKET_SIZE + bucket.offset as usize));
+        assert_eq!(&expected_buf[..], &inner_buf[..]);
     }
 }
