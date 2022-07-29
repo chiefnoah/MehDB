@@ -256,4 +256,23 @@ mod test {
         assert_eq!(i, new_index);
 
     }
+
+    #[test]
+    fn can_iterate_over_bucket() {
+        let mut bucket = Bucket {
+            offset: 0,
+            buf: [0; BUCKET_SIZE],
+        };
+        for i in 1..=16 {
+            let res = match bucket.put(i * 60, i * 2, 0) {
+                Err(e) => panic!("Unable to insert record: {}", e),
+                Ok(o) => o,
+            };
+        }
+        for (i, r) in bucket.iter().enumerate() {
+            // this is ugly lol
+            assert_eq!(((i+1) * 60) as u64, r.hash_key);
+            assert_eq!(((i+1) * 2) as u64, r.value);
+        }
+    }
 }
