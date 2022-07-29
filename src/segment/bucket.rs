@@ -203,7 +203,12 @@ mod test {
         // Insert another record to make sure we don't upset the index of the already inserted
         // record
         bucket.put(789, 666, 0).unwrap();
+        // Check that we can index it
         let record = bucket.at(index);
+        assert_eq!(record.hash_key, 123);
+        assert_eq!(record.value, 456);
+        // Check that we can .get the value
+        let record = bucket.get(123).unwrap();
         assert_eq!(record.hash_key, 123);
         assert_eq!(record.value, 456);
     }
@@ -213,10 +218,6 @@ mod test {
         let mut bucket = Bucket {
             offset: 0,
             buf: [0; BUCKET_SIZE],
-        };
-        let test_record1 = Record {
-            hash_key: 12345,
-            value: 666,
         };
         for i in 1..=16 {
             let res = match bucket.put(i * 60, i * 2, 0) {
@@ -237,5 +238,22 @@ mod test {
             assert_eq!(record.hash_key, i * 60);
             assert_eq!(record.value, i * 2);
         }
+    }
+
+    #[test]
+    fn can_overwrite_soft_deleted_record() {
+        let mut bucket = Bucket {
+            offset: 0,
+            buf: [0; BUCKET_SIZE],
+        };
+        let hash_key: u64 = 0xF000000000000000;
+        let i = bucket.put(123, 456, 0).unwrap();
+        assert_eq!(i, 0);
+        let new_index = bucket.put(hash_key, 666, 1).unwrap();
+        // Check that we overwrote the existing value because we now look at the first MSB
+        // (local_depth=1 vs local_depth=0). This is because we "soft delete" during segment
+        // splitting
+        assert_eq!(i, new_index);
+
     }
 }
