@@ -130,7 +130,8 @@ impl<'b> Iterator for BucketIter<'b> {
         if self.index >= BUCKET_RECORDS {
             return None;
         }
-        Some(self.bucket.at(self.index as usize))
+        self.index += 1;
+        Some(self.bucket.at(self.index - 1 as usize))
     }
 }
 
@@ -189,7 +190,6 @@ mod test {
         }
     }
 
-    #[ignore]
     #[test]
     fn can_insert_and_index_bucket() {
         let mut bucket = Bucket {
@@ -208,7 +208,6 @@ mod test {
         assert_eq!(record.value, 456);
     }
 
-    #[ignore]
     #[test]
     fn can_put_and_get_records_from_bucket() {
         let mut bucket = Bucket {
@@ -226,10 +225,10 @@ mod test {
             };
         }
         // Bucket overflow
-        //match bucket.put(1234, 666, 0) {
-        //    Ok(_) => panic!("Bucket should have overflown, but didn't"),
-        //    Err(e) => (),
-        //}
+        match bucket.put(1234, 666, 0) {
+            Ok(_) => panic!("Bucket should have overflown, but didn't"),
+            Err(e) => (),
+        }
         for i in 1..=16 {
             let record = match bucket.get(i * 60) {
                 None => panic!("Unable to fetch record from bucket"),
