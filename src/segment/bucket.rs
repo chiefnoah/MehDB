@@ -1,6 +1,7 @@
-use std::mem::size_of;
-use std::io::{self, Write, Read, Seek};
 use crate::serializer::Serializable;
+use log::{debug, info};
+use std::io::{self, Read, Seek, Write};
+use std::mem::size_of;
 
 // The number of records in each bucket.
 // This may be adatped to be parametrizable or dynamic in the future.
@@ -35,6 +36,14 @@ impl Serializable for Bucket {
     }
 }
 
+/// Gets the effective key
+fn normalize_key(hk: u64, local_depth: u64) -> u64 {
+    if local_depth == 0 {
+        return 0;
+    };
+    hk >> (64 - local_depth)
+}
+
 impl Bucket {
     fn get(&self, hk: u64) -> Option<Record> {
         for record in self.iter() {
@@ -45,16 +54,50 @@ impl Bucket {
         None
     }
 
-    pub fn put(&mut self, hk: u64, value: u64, local_depth: u64) -> Result<usize, String> {
+    fn _put(&mut self, index: usize, hk: u64, value: u64) {
+    }
+
+    fn maybe_index_to_insert(&self, hk: u64, value: u64, local_depth: u64) -> Option<usize> {
         for (i, record) in self.iter().enumerate() {
-            if record.hash_key >> local_depth & hk >> local_depth != hk >> local_depth {
-                let offset = i * size_of::<Record>();
-                self.buf[offset..offset+8].copy_from_slice(&hk.to_le_bytes());
-                self.buf[offset + 8..offset+16].copy_from_slice(&value.to_le_bytes());
-                return Ok(offset);
+            println!(
+                "Index: {}\t hk: {}\tvalue: {}",
+                i, record.hash_key, record.value
+            );
+            if record.hash_key == 0 && record.value == 0 {
+                debug!("Inserting record in empty slot.");
+                return Some(i);
+                
+            } else if record.hash_key == hk {
+                return Some(i);
+            } else if normalize_key(record.hash_key, local_depth) & normalize_key(hk, local_depth)
+                != normalize_key(hk, local_depth)
+            {
+                println!( "Replacing {} with new record", record.hash_key);
+                // return the index we're inserting at
+                return Some(i);
             }
         }
-        Err(String::from("Bucket full"))
+        None
+    }
+
+    /// Attempts to insert a record in the bucket. Returns the index it was inserted at if
+    /// successful, otherwise an error indicating an overflow. In the event of an overflow, it is
+    /// the responsibility of the Segmenter to split and allocate annother segment so the new
+    /// record can be inserted.
+    pub fn put(&mut self, hk: u64, value: u64, local_depth: u64) -> Result<usize, String> {
+        println!(
+            "Inserting hk: {}\tvalue: {}\t local depth: {}",
+            hk, value, local_depth
+        );
+        let index = match self.maybe_index_to_insert(hk, value, local_depth) {
+            None => return Err(String::from("Bucket full")),
+            Some(i) => i,
+        };
+        let offset = index * size_of::<Record>();
+        let buf = &mut self.buf;
+        buf[offset..offset + 8].copy_from_slice(&hk.to_le_bytes());
+        buf[offset + 8..offset + 16].copy_from_slice(&value.to_le_bytes());
+        Ok(index)
     }
 
     fn iter(&self) -> BucketIter {
@@ -67,7 +110,7 @@ impl Bucket {
     fn at(&self, index: usize) -> Record {
         let offset = index * size_of::<Record>();
         let mut buf: [u8; 8] = [0; 8];
-        buf.copy_from_slice(&self.buf[offset..offset+8]);
+        buf.copy_from_slice(&self.buf[offset..offset + 8]);
         let hash_key = u64::from_le_bytes(buf);
         buf.copy_from_slice(&self.buf[offset + 8..offset + 16]);
         let value = u64::from_le_bytes(buf);
@@ -76,7 +119,7 @@ impl Bucket {
 }
 
 struct BucketIter<'b> {
-    index: u64,
+    index: usize, // this could be a u16
     bucket: &'b Bucket,
 }
 
@@ -84,7 +127,7 @@ impl<'b> Iterator for BucketIter<'b> {
     type Item = Record;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.index >= BUCKET_RECORDS as u64 {
+        if self.index >= BUCKET_RECORDS {
             return None;
         }
         Some(self.bucket.at(self.index as usize))
@@ -94,11 +137,14 @@ impl<'b> Iterator for BucketIter<'b> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use io::{self, Read, Write, Cursor, Seek};
-    
+    use io::{self, Cursor, Read, Seek, Write};
+
     #[test]
     fn bucket_can_pack() {
-        let mut bucket = Bucket {offset: 5, buf: [0; BUCKET_SIZE]};
+        let mut bucket = Bucket {
+            offset: 5,
+            buf: [0; BUCKET_SIZE],
+        };
         // change this so we have something to check for
         bucket.buf[0] = 255;
         let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
@@ -145,9 +191,34 @@ mod test {
 
     #[ignore]
     #[test]
+    fn can_insert_and_index_bucket() {
+        let mut bucket = Bucket {
+            offset: 0,
+            buf: [0; BUCKET_SIZE],
+        };
+        let index = match bucket.put(123, 456, 0) {
+            Err(e) => panic!("Unable to insert record: {}", e),
+            Ok(i) => i,
+        };
+        // Insert another record to make sure we don't upset the index of the already inserted
+        // record
+        bucket.put(789, 666, 0).unwrap();
+        let record = bucket.at(index);
+        assert_eq!(record.hash_key, 123);
+        assert_eq!(record.value, 456);
+    }
+
+    #[ignore]
+    #[test]
     fn can_put_and_get_records_from_bucket() {
-        let mut bucket = Bucket {offset: 0, buf: [0; BUCKET_SIZE ]};
-        let test_record1 = Record{hash_key: 12345, value: 666};
+        let mut bucket = Bucket {
+            offset: 0,
+            buf: [0; BUCKET_SIZE],
+        };
+        let test_record1 = Record {
+            hash_key: 12345,
+            value: 666,
+        };
         for i in 1..=16 {
             let res = match bucket.put(i * 60, i * 2, 0) {
                 Err(e) => panic!("Unable to insert record: {}", e),
