@@ -1,5 +1,6 @@
 use crate::directory::{Directory, MemoryDirectory};
-use crate::segment::{self, FileSegmenter, Segmenter};
+use crate::segment::{self, Segmenter};
+use crate::segment::file_segmenter::FileSegmenter;
 use crate::serializer::{self, DataOrOffset, Serializable, SimpleFileTransactor, Transactor};
 use log::{error, info, warn};
 use serde::{Deserialize, Serialize};

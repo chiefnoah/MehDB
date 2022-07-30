@@ -54,8 +54,7 @@ impl Bucket {
         None
     }
 
-    fn _put(&mut self, index: usize, hk: u64, value: u64) {
-    }
+    fn _put(&mut self, index: usize, hk: u64, value: u64) {}
 
     fn maybe_index_to_insert(&self, hk: u64, value: u64, local_depth: u64) -> Option<usize> {
         for (i, record) in self.iter().enumerate() {
@@ -66,13 +65,12 @@ impl Bucket {
             if record.hash_key == 0 && record.value == 0 {
                 debug!("Inserting record in empty slot.");
                 return Some(i);
-                
             } else if record.hash_key == hk {
                 return Some(i);
             } else if normalize_key(record.hash_key, local_depth) & normalize_key(hk, local_depth)
                 != normalize_key(hk, local_depth)
             {
-                println!( "Replacing {} with new record", record.hash_key);
+                println!("Replacing {} with new record", record.hash_key);
                 // return the index we're inserting at
                 return Some(i);
             }
@@ -254,7 +252,6 @@ mod test {
         // (local_depth=1 vs local_depth=0). This is because we "soft delete" during segment
         // splitting
         assert_eq!(i, new_index);
-
     }
 
     #[test]
@@ -271,8 +268,9 @@ mod test {
         }
         for (i, r) in bucket.iter().enumerate() {
             // this is ugly lol
-            assert_eq!(((i+1) * 60) as u64, r.hash_key);
-            assert_eq!(((i+1) * 2) as u64, r.value);
+            let i = i + 1;
+            assert_eq!((i * 60) as u64, r.hash_key);
+            assert_eq!((i * 2) as u64, r.value);
         }
     }
 }
