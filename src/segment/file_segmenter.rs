@@ -135,3 +135,12 @@ impl Segmenter for FileSegmenter {
         Ok(())
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn
+
+}
