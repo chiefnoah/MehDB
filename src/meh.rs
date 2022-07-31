@@ -1,6 +1,6 @@
 use crate::directory::{Directory, MemoryDirectory};
-use crate::segment::{self, Segmenter};
-use crate::segment::file_segmenter::FileSegmenter;
+use crate::segment::{self, Segmenter, BasicSegmenter};
+use crate::segment::file_segmenter::file_segmenter;
 use crate::serializer::{self, DataOrOffset, Serializable, SimpleFileTransactor, Transactor};
 use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
@@ -22,7 +22,7 @@ const SEGMENT_BUCKETS: usize = 64;
 pub struct MehDB {
     hasher_key: highway::Key,
     directory: MemoryDirectory,
-    segmenter: FileSegmenter,
+    segmenter: BasicSegmenter<File>,
     //transactor: SimpleFileTransactor,
 }
 
@@ -37,7 +37,7 @@ impl MehDB {
             None => Path::new("."),
         };
         let segment_file_path = path.join("segments.bin");
-        let mut segmenter = FileSegmenter::init(Some(&segment_file_path)).unwrap();
+        let mut segmenter = file_segmenter(Some(&segment_file_path))?;
         let mehdb = MehDB {
             hasher_key: highway::Key([53252, 2352323, 563956259, 234832]), // TODO: change this
             directory: MemoryDirectory::init(None, segmenter.segment(0)?.offset),

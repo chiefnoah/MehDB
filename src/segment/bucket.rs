@@ -45,7 +45,7 @@ fn normalize_key(hk: u64, local_depth: u64) -> u64 {
 }
 
 impl Bucket {
-    fn get(&self, hk: u64) -> Option<Record> {
+    pub fn get(&self, hk: u64) -> Option<Record> {
         for record in self.iter() {
             if record.hash_key == hk {
                 return Some(record);
@@ -98,7 +98,7 @@ impl Bucket {
         Ok(index)
     }
 
-    fn iter(&self) -> BucketIter {
+    pub fn iter(&self) -> BucketIter {
         BucketIter {
             index: 0,
             bucket: &self,
@@ -116,7 +116,7 @@ impl Bucket {
     }
 }
 
-struct BucketIter<'b> {
+pub struct BucketIter<'b> {
     index: usize, // this could be a u16
     bucket: &'b Bucket,
 }

@@ -1,14 +1,14 @@
-use crate::serializer::{DataOrOffset, Serializable};
-use crate::segment::header::Header;
 use crate::segment::bucket::{Bucket, BUCKET_SIZE};
+use crate::segment::header::Header;
+use crate::serializer::{DataOrOffset, Serializable};
+use log::info;
 use simple_error::SimpleError;
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{self, BufWriter, Read, Seek, Write};
+use std::io::{self, BufWriter, Cursor, Read, Seek, Write};
 use std::mem::size_of;
 use std::ops::{Index, IndexMut};
 use std::path::Path;
-use log::info;
 
 // The number of buckets in each segment.
 // This may be adapted to be parametrizable on a per-database level
@@ -58,15 +58,44 @@ pub trait Segmenter {
     fn write_bucket(&mut self, bucket: &Bucket) -> io::Result<()>;
 }
 
-struct BasicSegmenter<B: Read + Write + Seek> {
+pub struct BasicSegmenter<B: Read + Write + Seek> {
     buffer: B,
     header: Header,
     header_dirty: bool,
-    segment_depth_cache: HashMap<u64, u64>
+    segment_depth_cache: HashMap<u64, u64>,
+}
+
+impl<B: Read + Write + Seek> BasicSegmenter<B> {
+    pub fn init(mut buffer: B) -> io::Result<Self> {
+        buffer.seek(io::SeekFrom::Start(0))?;
+        // Attempt to read the header and use it, otherwise initialize as new
+        let mut first_time = false;
+        let header = match Header::unpack(&mut buffer) {
+            Ok(h) => h,
+            Err(e) => {
+                first_time = true;
+                Header {
+                    global_depth: 0,
+                    num_segments: 0,
+                }
+            },
+        };
+        let mut out = Self {
+            buffer,
+            header,
+            header_dirty: false,
+            segment_depth_cache: HashMap::new(),
+        };
+        if first_time {
+            out.allocate_segment(0)?;
+        }
+        Ok(out)
+    }
 }
 
 impl<B> Segmenter for BasicSegmenter<B>
-where B: Write + Read + Seek
+where
+    B: Write + Read + Seek,
 {
     fn segment(&mut self, index: u64) -> io::Result<Segment> {
         let offset = (index * SEGMENT_SIZE as u64) * size_of::<Header>() as u64;
@@ -85,12 +114,15 @@ where B: Write + Read + Seek
     }
 
     fn allocate_segment(&mut self, depth: u64) -> io::Result<Segment> {
-        let offset = self.header.num_segments * SEGMENT_SIZE as u64;
+        // Seek to the proper offset
+        let offset = (self.header.num_segments * SEGMENT_SIZE as u64) +
+            size_of::<Header>() as u64;
         self.buffer.seek(io::SeekFrom::Start(offset))?;
-        const SIZE: usize = SEGMENT_SIZE as usize;
-        let mut buf: [u8; SIZE] = [0; SIZE];
+        let mut buf: [u8; SEGMENT_SIZE] = [0; SEGMENT_SIZE];
         buf[..8].copy_from_slice(&depth.to_le_bytes());
         self.buffer.write(&buf)?;
+        self.header.num_segments += 1;
+        self.sync_header()?;
         Ok(Segment { depth, offset })
     }
 
@@ -98,8 +130,7 @@ where B: Write + Read + Seek
         // The number of buckets passed in *must* be the entire segment's buckets
         assert!(buckets.len() as u64 == BUCKETS_PER_SEGMENT as u64);
         let offset = (self.header.num_segments * SEGMENT_SIZE as u64) + size_of::<Header>() as u64;
-        let mut buffer =
-            BufWriter::with_capacity(SEGMENT_SIZE as usize, &mut self.buffer);
+        let mut buffer = BufWriter::with_capacity(SEGMENT_SIZE as usize, &mut self.buffer);
         buffer.seek(io::SeekFrom::Start(offset))?;
         let mut buf: [u8; 8] = [0; 8];
         buf[..].copy_from_slice(&depth.to_le_bytes());
@@ -107,8 +138,10 @@ where B: Write + Read + Seek
         for bucket in buckets.iter() {
             bucket.pack(&mut buffer)?;
         }
-        buffer.seek(io::SeekFrom::Start(0))?;
-        self.header.pack(&mut buffer)?;
+        // Drop so we can call sync_header
+        drop(buffer);
+        self.header.num_segments += 1;
+        self.sync_header()?;
         Ok(Segment { offset, depth })
     }
 
@@ -124,7 +157,8 @@ where B: Write + Read + Seek
     }
 
     fn bucket(&mut self, segment: &Segment, index: u64) -> io::Result<Bucket> {
-        let offset = segment.offset + (index * BUCKET_SIZE as u64);
+        //-----------------------------------------------------------| for segment_depth
+        let offset = segment.offset + (index * BUCKET_SIZE as u64) + 8;
         self.buffer.seek(io::SeekFrom::Start(offset))?;
         info!("Reading bucket at offset {}", offset);
         return Bucket::unpack(&mut self.buffer);
@@ -140,11 +174,19 @@ where B: Write + Read + Seek
 #[cfg(test)]
 mod tests {
     use super::*;
-    use io::{self, Read, Write, Cursor, Seek};
+    use io::{self, Cursor, Read, Seek, Write};
+    
+    fn inmemory_segmenter() -> BasicSegmenter<Cursor<Vec<u8>>> {
+        let buffer = Cursor::new(Vec::new());
+        BasicSegmenter::init(buffer).unwrap()
+    }
 
     #[test]
     fn can_pack_segment() {
-        let segment = Segment{ depth: 5, offset: 3 };
+        let segment = Segment {
+            depth: 5,
+            offset: 3,
+        };
         let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
         let result = segment.pack(&mut buf).unwrap();
         assert_eq!(result, 3);
@@ -158,5 +200,30 @@ mod tests {
         let segment = Segment::unpack(&mut buf).unwrap();
         assert_eq!(segment.depth, 51);
         assert_eq!(segment.offset, 1);
+    }
+
+    #[test]
+    fn segmenter_init_syncs_header() {
+        let mut segmenter = inmemory_segmenter();
+        let header = segmenter.header().unwrap();
+        assert_eq!(header.num_segments, 1);
+        assert_eq!(header.global_depth, 0); 
+    }
+
+    #[test]
+    fn segmenter_init_initializes_first_segment() {
+        let mut segmenter = inmemory_segmenter();
+        let first_segment = segmenter.segment(0).unwrap();
+        // Get the last bucket
+        let mut bucket = segmenter.bucket(&first_segment, BUCKETS_PER_SEGMENT as u64 - 1 ).unwrap();
+        bucket.put(123, 456, 0).unwrap();
+        segmenter.write_bucket(&bucket).unwrap();
+        let bucket = segmenter.bucket(&first_segment, BUCKETS_PER_SEGMENT as u64 - 1 ).unwrap();
+        let r = bucket.get(123).unwrap();
+        assert_eq!(r.hash_key, 123);
+        assert_eq!(r.value, 456);
+
+        let expected_size = SEGMENT_SIZE + size_of::<Header>();
+        assert_eq!(segmenter.buffer.into_inner().len(), expected_size);
     }
 }
