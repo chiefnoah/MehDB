@@ -226,4 +226,21 @@ mod tests {
         let expected_size = SEGMENT_SIZE + size_of::<Header>();
         assert_eq!(segmenter.buffer.into_inner().len(), expected_size);
     }
+
+    #[test]
+    fn segmenter_initialize_segment_correct_size() {
+        let mut segmenter = inmemory_segmenter();
+        let first_segment = segmenter.segment(0).unwrap();
+        let second_segment = segmenter.allocate_segment(3).unwrap();
+        assert_eq!(second_segment.depth, 3);
+        let expected_offset = size_of::<Header>() + SEGMENT_SIZE;
+        assert_eq!(second_segment.offset, expected_offset as u64);
+        let another_second_segment = segmenter.segment(1).unwrap();
+        assert_eq!(another_second_segment.offset, second_segment.offset);
+        assert_eq!(another_second_segment.depth, second_segment.offset);
+        let expected_buffer_length = size_of::<Header>() + 2 * (SEGMENT_SIZE);
+        let actual_len = segmenter.buffer.into_inner().len();
+        assert_eq!(actual_len, expected_buffer_length);
+    }
+
 }

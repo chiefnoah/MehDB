@@ -26,7 +26,7 @@ pub fn file_segmenter(path: Option<&Path>) -> io::Result<BasicSegmenter<File>> {
         Some(path) => path,
         None => Path::new("index.bin"),
     };
-    let mut file = if !path.exists() {
+    let file = if !path.exists() {
         let f = File::create(path);
         f
     } else {
