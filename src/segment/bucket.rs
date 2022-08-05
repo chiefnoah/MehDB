@@ -1,5 +1,7 @@
 use crate::serializer::Serializable;
+use anyhow::{Result, Context};
 use log::{debug, info};
+use std::fmt;
 use std::io::{self, Read, Seek, Write};
 use std::mem::size_of;
 
@@ -19,19 +21,23 @@ pub struct Bucket {
 }
 
 impl Serializable for Bucket {
-    fn pack<W: Write + Seek>(&self, buffer: &mut W) -> io::Result<u64> {
+    fn pack<W: Write + Seek>(&self, buffer: &mut W) -> Result<u64> {
         let offset = buffer.seek(io::SeekFrom::Start(self.offset)).unwrap();
-        buffer.write(&self.buf)?;
+        buffer.write(&self.buf).with_context(|| {
+            format!("Error packing bucket into buffer.")
+        })?;
         Ok(offset)
     }
 
-    fn unpack<R: Read + Seek>(buffer: &mut R) -> io::Result<Self> {
+    fn unpack<R: Read + Seek>(buffer: &mut R) -> Result<Self> {
         let offset = buffer.seek(io::SeekFrom::Current(0)).unwrap();
         let mut bucket = Self {
             offset,
             buf: [0; BUCKET_SIZE],
         };
-        buffer.read_exact(&mut bucket.buf)?;
+        buffer.read_exact(&mut bucket.buf).with_context(|| {
+            format!("Error reading buffer when unpacking bucket at offset {}", offset)
+        })?;
         Ok(bucket)
     }
 }
@@ -82,13 +88,19 @@ impl Bucket {
     /// successful, otherwise an error indicating an overflow. In the event of an overflow, it is
     /// the responsibility of the Segmenter to split and allocate annother segment so the new
     /// record can be inserted.
-    pub fn put(&mut self, hk: u64, value: u64, local_depth: u64) -> Result<usize, String> {
+    pub fn put(&mut self, hk: u64, value: u64, local_depth: u64) -> Result<usize, BucketFullError> {
         println!(
             "Inserting hk: {}\tvalue: {}\t local depth: {}",
             hk, value, local_depth
         );
         let index = match self.maybe_index_to_insert(hk, value, local_depth) {
-            None => return Err(String::from("Bucket full")),
+            None => {
+                return Err(BucketFullError {
+                    offset: self.offset,
+                    hash_key: hk,
+                    local_depth,
+                })
+            }
             Some(i) => i,
         };
         let offset = index * size_of::<Record>();
@@ -130,6 +142,23 @@ impl<'b> Iterator for BucketIter<'b> {
         }
         self.index += 1;
         Some(self.bucket.at(self.index - 1 as usize))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BucketFullError {
+    offset: u64,
+    hash_key: u64,
+    local_depth: u64,
+}
+
+impl fmt::Display for BucketFullError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "Bucket at offset {} and depth {} overflowed when trying to {}.",
+            self.offset, self.local_depth, self.offset
+        )
     }
 }
 

@@ -3,23 +3,23 @@ use parking_lot::RwLock;
 use std::io;
 
 pub trait Directory<C> {
-    fn segment_offset(&self, i: u64) -> io::Result<u64>;
-    fn set_segment_offset(&self, i: u64, offset: u64) -> io::Result<()>;
+    fn segment_index(&self, i: u64) -> io::Result<u32>;
+    fn set_segment_index(&self, i: u64, index: u32) -> io::Result<()>;
     fn grow(&mut self) -> io::Result<u64>;
 }
 
 pub struct MemoryDirectory {
     // dir contains the directory and the global depth in a tuple
-    dir: RwLock<(Vec<u64>, u64)>,
+    dir: RwLock<(Vec<u32>, u32)>,
 }
 
 pub struct MemoryDirectoryConfig {}
 
 impl MemoryDirectory {
-    pub fn init(config: Option<MemoryDirectoryConfig>, initial_offset: u64) -> Self {
+    pub fn init(config: Option<MemoryDirectoryConfig>, initial_index: u32) -> Self {
         info!("Initializing new MemoryDirectory");
-        let mut dir = Vec::with_capacity(1);
-        dir.push(initial_offset);
+        let mut dir: Vec<u32> = Vec::with_capacity(1);
+        dir.push(initial_index);
         MemoryDirectory {
             dir: RwLock::new((dir, 0)),
         }
@@ -27,9 +27,9 @@ impl MemoryDirectory {
 }
 
 impl Directory<MemoryDirectoryConfig> for MemoryDirectory {
-    fn segment_offset(&self, i: u64) -> io::Result<u64> {
+    fn segment_index(&self, i: u64) -> io::Result<u32> {
         let unlocked = self.dir.read();
-        let dir: &Vec<u64> = &unlocked.0;
+        let dir: &Vec<u32> = &unlocked.0;
         let global_depth = unlocked.1;
         let index = if global_depth == 0 {
             // Lazy way to get out of overflowing bitshift
@@ -47,9 +47,9 @@ impl Directory<MemoryDirectoryConfig> for MemoryDirectory {
             )),
         }
     }
-    fn set_segment_offset(&self, i: u64, offset: u64) -> io::Result<()> {
+    fn set_segment_index(&self, i: u64, index: u32) -> io::Result<()> {
         let mut dir = self.dir.write();
-        dir.0[i as usize] = offset;
+        dir.0[i as usize] = index;
         Ok(())
     }
 

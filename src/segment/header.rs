@@ -1,5 +1,6 @@
 use std::io::{self, Write, Read, Seek};
 use crate::serializer::Serializable;
+use anyhow::Result;
 
 pub struct Header {
     pub global_depth: u64,
@@ -7,7 +8,7 @@ pub struct Header {
 }
 
 impl Serializable for Header {
-    fn pack<W: Write + Seek>(&self, buffer: &mut W) -> io::Result<u64> {
+    fn pack<W: Write + Seek>(&self, buffer: &mut W) -> Result<u64> {
         let global_depth_bytes = self.global_depth.to_le_bytes();
         let num_segment_bytes = self.num_segments.to_le_bytes();
         let offset = buffer.seek(io::SeekFrom::Current(0)).unwrap();
@@ -16,7 +17,7 @@ impl Serializable for Header {
         Ok(offset)
     }
 
-    fn unpack<R: Read + Seek>(file: &mut R) -> io::Result<Self> {
+    fn unpack<R: Read + Seek>(file: &mut R) -> Result<Self> {
         let mut buf: [u8; 8] = [0; 8];
         file.read_exact(&mut buf[..])?;
         let global_depth = u64::from_le_bytes(buf);

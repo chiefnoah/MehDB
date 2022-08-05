@@ -11,6 +11,7 @@ use std::hash::Hasher;
 use std::io::{self, Read, Seek, Write};
 use std::mem::size_of;
 use std::path::Path;
+use anyhow::{Result, anyhow, Context};
 
 use bitvec::prelude::*;
 use highway::{self, HighwayHash, HighwayHasher};
@@ -30,17 +31,19 @@ const HEADER_SIZE: u64 = 16;
 
 impl MehDB {
     // New creates a new instance of MehDB with it's data in optional path.
-    pub fn init(path: Option<&Path>) -> Result<Self, io::Error> {
+    pub fn init(path: Option<&Path>) -> Result<Self> {
         let path: &Path = match path {
             Some(path) => path,
             // Default to the current directory
             None => Path::new("."),
         };
         let segment_file_path = path.join("segments.bin");
-        let mut segmenter = file_segmenter(Some(&segment_file_path))?;
+        let segmenter = file_segmenter(Some(&segment_file_path)).with_context(|| {
+            format!("Unable to initialize file_segmenter.")
+        })?;
         let mehdb = MehDB {
             hasher_key: highway::Key([53252, 2352323, 563956259, 234832]), // TODO: change this
-            directory: MemoryDirectory::init(None, segmenter.segment(0)?.offset),
+            directory: MemoryDirectory::init(None, 0),
             segmenter,
         };
         Ok(mehdb)
@@ -50,7 +53,7 @@ impl MehDB {
         &mut self,
         key: serializer::ByteKey,
         value: serializer::ByteValue,
-    ) -> Result<(), io::Error> {
+    ) -> Result<()> {
         let hasher = HighwayHasher::new(self.hasher_key);
         // We only need the first u64 of the returned value because
         // It's unlikely we have the hard drive space to support a u64 deep directory
@@ -59,9 +62,9 @@ impl MehDB {
         let hash_key = hasher.hash256(&key.0);
         let msb_hash_key = hash_key[0];
         info!("msb_hash_key: {}", msb_hash_key);
-        let segment_index = self.directory.segment_offset(msb_hash_key)?;
-        info!("Segment index {}", segment_index);
-        let segment = self.segmenter.segment(segment_index)?;
+        let segment_offset = self.directory.segment_index(msb_hash_key)?;
+        info!("Segment index {}", segment_offset);
+        let segment = self.segmenter.segment(segment_offset)?;
         let bucket_index = 255 & hash_key[1];
         info!("Bucket index: {}", bucket_index);
         let mut bucket = self.segmenter.bucket(&segment, bucket_index)?;
@@ -69,7 +72,7 @@ impl MehDB {
         match overflow {
             Err(e) => {
                 warn!("Bucket overflowed. Allocating new segment and splitting.");
-                Err(io::Error::new(io::ErrorKind::AlreadyExists, e))
+                Err(anyhow!(e))
             },
             _ => Ok(()),
         }

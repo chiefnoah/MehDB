@@ -16,6 +16,7 @@ highway = "0.8"
 bitvec = "1"
 cache-padded = "1.2"
 simple-error = "0.2"
+anyhow = "1"
 
 [env]
 RUST_LOG = "debug"

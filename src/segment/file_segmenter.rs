@@ -10,6 +10,7 @@ use std::mem::size_of;
 use std::ops::{Index, IndexMut};
 use std::path::Path;
 use crate::segment::{Segment, Segmenter};
+use anyhow::Result;
 use log::info;
 
 // The number of buckets in each segment.
@@ -21,7 +22,7 @@ const SEGMENT_SIZE: usize = (BUCKET_SIZE * BUCKETS_PER_SEGMENT) + 8;
 const SEGMENT_HEADER_SIZE: usize = size_of::<Header>();
 
 
-pub fn file_segmenter(path: Option<&Path>) -> io::Result<BasicSegmenter<File>> {
+pub fn file_segmenter(path: Option<&Path>) -> Result<BasicSegmenter<File>> {
     let path: &Path = match path {
         Some(path) => path,
         None => Path::new("index.bin"),

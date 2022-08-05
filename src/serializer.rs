@@ -1,13 +1,14 @@
 use log::info;
 use std::default::Default;
 use std::fs::File;
-use std::io::{self, Result};
+use std::io;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use anyhow::Result;
 
 pub trait Serializable: Sized {
     // TODO: no more Option or tagged result
-    fn pack<W: Write + Seek>(&self, file: &mut W) -> io::Result<u64>;
+    fn pack<W: Write + Seek>(&self, file: &mut W) -> Result<u64>;
     fn unpack<R: Read + Seek>(buffer: &mut R) -> Result<Self>;
 }
 
@@ -42,10 +43,10 @@ pub struct Transaction {
 }
 
 impl Serializable for Transaction {
-    fn pack<File>(&self, file: &mut File) -> io::Result<u64> {
+    fn pack<File>(&self, file: &mut File) -> Result<u64> {
         todo!("Implement this.");
     }
-    fn unpack<File>(file: &mut File) -> io::Result<Self> {
+    fn unpack<File>(file: &mut File) -> Result<Self> {
         todo!("Implement this.");
     }
 }
