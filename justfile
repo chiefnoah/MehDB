@@ -12,3 +12,9 @@ watch:
 
 watch-run:
     fd -g '*.rs' | entr -c cargo run
+
+watch-slowly:
+    fd -g '*.rs' | taskpolicy -c background entr -c cargo test
+
+watch-run-slowly:
+    fd -g '*.rs' | taskpolicy -c background entr -c cargo run

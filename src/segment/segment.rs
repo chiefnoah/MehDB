@@ -47,19 +47,19 @@ impl Serializable for Segment {
 
 // A Segmenter is a something responsible for allocating and reading segments
 pub trait Segmenter {
-    // Attempts to read an existing segment.
+    /// Attempts to read an existing segment.
     fn segment(&mut self, index: u32) -> Result<Segment>;
-    // Creates a new segment and returns it's index.
+    /// Creates a new segment and returns it's index.
     fn allocate_segment(&mut self, depth: u64) -> Result<Segment>;
-    // Creates a new segment, filling it iwth buckets
+    /// Creates a new segment, filling it iwth buckets
     fn allocate_with_buckets(&mut self, buckets: Vec<Bucket>, depth: u64) -> Result<Segment>;
-    // Returns the header
+    /// Returns the header
     fn header(&mut self) -> Result<Header>;
-    // Sets the global_depth
+    /// Sets the global_depth
     fn sync_header(&mut self) -> Result<()>;
-    // Retrieves a bucket from segment at index
+    /// Retrieves a bucket from segment at index
     fn bucket(&mut self, segment: &Segment, index: u64) -> Result<Bucket>;
-    // Overwrites an existing bucket
+    /// Overwrites an existing bucket
     fn write_bucket(&mut self, bucket: &Bucket) -> Result<()>;
 }
 
@@ -180,6 +180,12 @@ where
         Ok(())
     }
 }
+
+//impl BasicSegmenter {
+//    
+//    fn split_segment() -> Segment {}
+//
+//}
 
 #[cfg(test)]
 mod tests {
