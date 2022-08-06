@@ -4,7 +4,7 @@ use crate::segment::bucket::{Bucket, BUCKET_SIZE};
 use crate::segment::BasicSegmenter;
 use simple_error::SimpleError;
 use std::collections::HashMap;
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter, Read, Seek, Write};
 use std::mem::size_of;
 use std::ops::{Index, IndexMut};
@@ -27,11 +27,11 @@ pub fn file_segmenter(path: Option<&Path>) -> Result<BasicSegmenter<File>> {
         Some(path) => path,
         None => Path::new("index.bin"),
     };
-    let file = if !path.exists() {
-        let f = File::create(path);
-        f
-    } else {
-        File::open(path)
-    }?;
+    let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .create(true)
+            .open(path)?;
     BasicSegmenter::init(file)
 }

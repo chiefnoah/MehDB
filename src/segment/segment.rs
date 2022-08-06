@@ -228,8 +228,8 @@ mod tests {
         let mut bucket = segmenter
             .bucket(&first_segment, BUCKETS_PER_SEGMENT as u64 - 1)
             .unwrap();
-        bucket.put(123, 456, 0).unwrap();
-        segmenter.write_bucket(&bucket).unwrap();
+        bucket.put(123, 456, 0).expect("Unable to insert record into bucket");
+        segmenter.write_bucket(&bucket).expect("Unable to write bucket to segment");
         let bucket = segmenter
             .bucket(&first_segment, BUCKETS_PER_SEGMENT as u64 - 1)
             .unwrap();

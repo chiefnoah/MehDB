@@ -12,8 +12,11 @@ pub trait Serializable: Sized {
     fn unpack<R: Read + Seek>(buffer: &mut R) -> Result<Self>;
 }
 
+#[derive(Debug, Eq, PartialEq)]
 pub struct ByteKey(pub Vec<u8>);
-pub struct ByteValue(pub Vec<u8>);
+
+#[derive(Debug, Eq, PartialEq)]
+pub struct ByteValue(pub u64);
 
 impl Default for ByteKey {
     fn default() -> Self {
@@ -23,7 +26,7 @@ impl Default for ByteKey {
 
 impl Default for ByteValue {
     fn default() -> Self {
-        ByteValue(Vec::new())
+        ByteValue(0)
     }
 }
 

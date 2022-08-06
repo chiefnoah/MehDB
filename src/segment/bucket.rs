@@ -30,6 +30,12 @@ impl Record {
         buf[Record::hash_key_size()..].copy_from_slice(&self.value.to_le_bytes());
         buf
     }
+
+    pub fn from_bytes(buf: [u8; size_of::<Self>()]) -> Self {
+        let hash_key = u64::from_le_bytes(buf[0..8].try_into().unwrap());
+        let value = u64::from_le_bytes(buf[8..16].try_into().unwrap());
+        Self{hash_key, value}
+    }
 }
 
 pub struct Bucket {
@@ -70,7 +76,12 @@ fn normalize_key(hk: u64, local_depth: u64) -> u64 {
 
 impl Bucket {
     pub fn get(&self, hk: u64) -> Option<Record> {
+        debug!("Searching bucket for {}", hk);
         for record in self.iter() {
+            debug!(
+                "Found hk: {}\tvalue: {}",
+                record.hash_key, record.value
+            );
             if record.hash_key == hk {
                 return Some(record);
             }
@@ -322,5 +333,14 @@ mod test {
             assert_eq!((i * 60) as u64, r.hash_key);
             assert_eq!((i * 2) as u64, r.value);
         }
+    }
+
+    #[test]
+    fn record_can_go_to_from_bytes() {
+        let record = Record{hash_key: 0xF000000000000000, value: 1234};
+        let bytes = record.to_bytes();
+        let de_record = Record::from_bytes(bytes);
+        assert_eq!(de_record.hash_key, record.hash_key);
+        assert_eq!(de_record.value, record.value);
     }
 }

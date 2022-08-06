@@ -8,4 +8,7 @@ test-slowly:
     taskpolicy -c background cargo test
 
 watch:
-    fd -g '*.rs'cargo test
+    fd -g '*.rs' | entr -c cargo test
+
+watch-run:
+    fd -g '*.rs' | entr -c cargo run
