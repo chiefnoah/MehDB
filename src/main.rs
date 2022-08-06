@@ -9,6 +9,8 @@ pub mod serializer;
 
 use crate::meh::MehDB;
 use crate::serializer::{ByteKey, ByteValue};
+use log::{error};
+use anyhow::Result;
 
 
 fn main() {
@@ -24,8 +26,7 @@ fn main() {
         match db.put(key, value) {
             Ok(()) => return,
             Err(e) => {
-                println!("Error: {}", e);
-                panic!("Error");
+                panic!("Error: {:#}", e);
             },
         }
     }

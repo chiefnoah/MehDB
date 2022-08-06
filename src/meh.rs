@@ -1,8 +1,8 @@
 use crate::directory::{Directory, MemoryDirectory};
-use crate::segment::{self, Segmenter, BasicSegmenter};
+use crate::segment::{self, Segmenter, BasicSegmenter, BUCKETS_PER_SEGMENT};
 use crate::segment::file_segmenter::file_segmenter;
 use crate::serializer::{self, DataOrOffset, Serializable, SimpleFileTransactor, Transactor};
-use log::{error, info, warn};
+use log::{error, info, debug, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::Entry;
 use std::default::Default;
@@ -15,9 +15,6 @@ use anyhow::{Result, anyhow, Context};
 
 use bitvec::prelude::*;
 use highway::{self, HighwayHash, HighwayHasher};
-
-const BUCKET_RECORDS: usize = 16;
-const SEGMENT_BUCKETS: usize = 64;
 
 // My Extendible Hash Database
 pub struct MehDB {
@@ -62,20 +59,30 @@ impl MehDB {
         let hash_key = hasher.hash256(&key.0);
         let msb_hash_key = hash_key[0];
         info!("msb_hash_key: {}", msb_hash_key);
-        let segment_offset = self.directory.segment_index(msb_hash_key)?;
-        info!("Segment index {}", segment_offset);
-        let segment = self.segmenter.segment(segment_offset)?;
-        let bucket_index = 255 & hash_key[1];
-        info!("Bucket index: {}", bucket_index);
+        let segment_offset = self.directory.segment_index(msb_hash_key)
+            .with_context(|| {
+                format!("Unable to get segment offset for {}", msb_hash_key)
+            })?;
+        debug!("Segment index {}", segment_offset);
+        let segment = self.segmenter.segment(segment_offset)
+            .with_context(|| {
+                format!("Unable to read segment at offset {}", segment_offset)
+            })?;
+        let bucket_index = (BUCKETS_PER_SEGMENT - 1) as u64 & hash_key[1];
+        debug!("Bucket index: {}", bucket_index);
         let mut bucket = self.segmenter.bucket(&segment, bucket_index)?;
         let overflow = bucket.put(msb_hash_key, 1234, segment.depth);
         match overflow {
             Err(e) => {
-                warn!("Bucket overflowed. Allocating new segment and splitting.");
-                Err(anyhow!(e))
+                info!("Bucket overflowed. Allocating new segment and splitting.");
+                return Err(anyhow!(e));
             },
-            _ => Ok(()),
+            _ => (),
         }
+        self.segmenter.write_bucket(&bucket)
+            .with_context(|| {
+                format!("Saving updated bucket at offset {}", bucket.offset)
+            })
     }
     pub fn get(
         &self,

@@ -1,6 +1,6 @@
 use crate::serializer::Serializable;
 use anyhow::{Result, Context};
-use log::{debug, info};
+use log::{debug, info, trace};
 use std::fmt;
 use std::io::{self, Read, Seek, Write};
 use std::mem::size_of;
@@ -15,6 +15,23 @@ pub struct Record {
     pub value: u64,
 }
 
+impl Record {
+    pub const fn hash_key_size() -> usize {
+        size_of::<u64>()
+    }
+    pub const fn value_size() -> usize {
+        size_of::<u64>()
+    }
+
+    pub fn to_bytes(&self) -> [u8; size_of::<Self>()] {
+        const SIZE: usize = size_of::<Record>();
+        let mut buf: [u8; SIZE] = [0; SIZE];
+        buf[0..Record::hash_key_size()].copy_from_slice(&self.hash_key.to_le_bytes());
+        buf[Record::hash_key_size()..].copy_from_slice(&self.value.to_le_bytes());
+        buf
+    }
+}
+
 pub struct Bucket {
     pub offset: u64,
     buf: [u8; BUCKET_SIZE],
@@ -22,9 +39,9 @@ pub struct Bucket {
 
 impl Serializable for Bucket {
     fn pack<W: Write + Seek>(&self, buffer: &mut W) -> Result<u64> {
-        let offset = buffer.seek(io::SeekFrom::Start(self.offset)).unwrap();
+        let offset = buffer.seek(io::SeekFrom::Start(self.offset))?;
         buffer.write(&self.buf).with_context(|| {
-            format!("Error packing bucket into buffer.")
+            format!("Error packing bucket into buffer")
         })?;
         Ok(offset)
     }
@@ -35,7 +52,8 @@ impl Serializable for Bucket {
             offset,
             buf: [0; BUCKET_SIZE],
         };
-        buffer.read_exact(&mut bucket.buf).with_context(|| {
+        buffer.read_exact(&mut bucket.buf)
+            .with_context(|| {
             format!("Error reading buffer when unpacking bucket at offset {}", offset)
         })?;
         Ok(bucket)
@@ -64,23 +82,23 @@ impl Bucket {
 
     fn maybe_index_to_insert(&self, hk: u64, value: u64, local_depth: u64) -> Option<usize> {
         for (i, record) in self.iter().enumerate() {
-            println!(
+            trace!(
                 "Index: {}\t hk: {}\tvalue: {}",
                 i, record.hash_key, record.value
             );
             if record.hash_key == 0 && record.value == 0 {
-                debug!("Inserting record in empty slot.");
+                debug!("Found empty slot to insert record at index {}.", i);
                 return Some(i);
             } else if record.hash_key == hk {
                 return Some(i);
             } else if normalize_key(record.hash_key, local_depth) & normalize_key(hk, local_depth)
                 != normalize_key(hk, local_depth)
             {
-                println!("Replacing {} with new record", record.hash_key);
+                debug!("Replacing {} with new record", record.hash_key);
                 // return the index we're inserting at
                 return Some(i);
             }
-        }
+        };
         None
     }
 
@@ -89,7 +107,7 @@ impl Bucket {
     /// the responsibility of the Segmenter to split and allocate annother segment so the new
     /// record can be inserted.
     pub fn put(&mut self, hk: u64, value: u64, local_depth: u64) -> Result<usize, BucketFullError> {
-        println!(
+        debug!(
             "Inserting hk: {}\tvalue: {}\t local depth: {}",
             hk, value, local_depth
         );
@@ -103,10 +121,13 @@ impl Bucket {
             }
             Some(i) => i,
         };
+        let record = Record {hash_key: hk, value};
+        let bytes = record.to_bytes();
+        trace!("Record bytes: {:?}", &bytes);
         let offset = index * size_of::<Record>();
+        trace!("Record offset: {}", offset);
         let buf = &mut self.buf;
-        buf[offset..offset + 8].copy_from_slice(&hk.to_le_bytes());
-        buf[offset + 8..offset + 16].copy_from_slice(&value.to_le_bytes());
+        buf[offset..offset + size_of::<Record>()].copy_from_slice(&bytes);
         Ok(index)
     }
 

@@ -14,10 +14,10 @@ use std::path::Path;
 // The number of buckets in each segment.
 // This may be adapted to be parametrizable on a per-database level
 // in the futere.
-const BUCKETS_PER_SEGMENT: usize = 64;
+pub const BUCKETS_PER_SEGMENT: usize = 64;
 
 // The size on-disk of a segment
-const SEGMENT_SIZE: usize = (BUCKET_SIZE * BUCKETS_PER_SEGMENT) + 8;
+pub const SEGMENT_SIZE: usize = (BUCKET_SIZE * BUCKETS_PER_SEGMENT) + 8;
 
 pub struct Segment {
     pub depth: u64,
