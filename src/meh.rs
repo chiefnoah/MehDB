@@ -102,7 +102,7 @@ impl MehDB {
     pub fn get(
         &mut self,
         key: serializer::ByteKey,
-    ) -> Option<serializer::ByteValue> {
+    ) -> Option<Record> {
         let hasher = HighwayHasher::new(self.hasher_key);
         // We only need the first u64 of the returned value because
         // It's unlikely we have the hard drive space to support a u64 deep directory
@@ -117,9 +117,6 @@ impl MehDB {
                 return None;
             }
         };
-        match bucket.get(hash_key[0]) {
-            Some(v) => Some(serializer::ByteValue(v.value)),
-            None => None
-        }
+        bucket.get(hash_key[0])
     }
 }

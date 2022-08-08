@@ -10,6 +10,7 @@ use std::mem::size_of;
 const BUCKET_RECORDS: usize = 16;
 pub const BUCKET_SIZE: usize = BUCKET_RECORDS * size_of::<Record>();
 
+#[derive(Debug)]
 pub struct Record {
     pub hash_key: u64,
     pub value: u64,
