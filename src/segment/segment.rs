@@ -45,7 +45,7 @@ impl Serializable for Segment {
     }
 }
 
-// A Segmenter is a something responsible for allocating and reading segments
+/// A Segmenter is a something responsible for allocating and reading segments
 pub trait Segmenter {
     /// Attempts to read an existing segment.
     fn segment(&mut self, index: u32) -> Result<Segment>;
@@ -61,6 +61,12 @@ pub trait Segmenter {
     fn bucket(&mut self, segment: &Segment, index: u64) -> Result<Bucket>;
     /// Overwrites an existing bucket
     fn write_bucket(&mut self, bucket: &Bucket) -> Result<()>;
+    /// IterateSegments returns an Iterator that returns segments
+    fn iterate_segments(&mut self) -> SegmentIterator;
+}
+
+pub struct SegmentIterator {
+    index: usize,
 }
 
 pub struct BasicSegmenter<B: Read + Write + Seek> {
@@ -104,7 +110,7 @@ where
     B: Write + Read + Seek,
 {
     fn segment(&mut self, index: u32) -> Result<Segment> {
-        let offset = ((index as usize* SEGMENT_SIZE) + size_of::<Header>()) as u64;
+        let offset = ((index as usize * SEGMENT_SIZE) + size_of::<Header>()) as u64;
         if self.segment_depth_cache.contains_key(&offset) {
             return Ok(Segment {
                 depth: *self.segment_depth_cache.get(&offset).unwrap(),
@@ -179,13 +185,15 @@ where
         bucket.pack(&mut self.buffer)?;
         Ok(())
     }
+
+    fn iterate_segments(&mut self) -> SegmentIterator {
+        SegmentIterator { index: 0 }
+    }
 }
 
-//impl BasicSegmenter {
-//    
-//    fn split_segment() -> Segment {}
-//
-//}
+impl Iterator<Segment> for SegmentIterator {
+
+}
 
 #[cfg(test)]
 mod tests {
@@ -234,8 +242,12 @@ mod tests {
         let mut bucket = segmenter
             .bucket(&first_segment, BUCKETS_PER_SEGMENT as u64 - 1)
             .unwrap();
-        bucket.put(123, 456, 0).expect("Unable to insert record into bucket");
-        segmenter.write_bucket(&bucket).expect("Unable to write bucket to segment");
+        bucket
+            .put(123, 456, 0)
+            .expect("Unable to insert record into bucket");
+        segmenter
+            .write_bucket(&bucket)
+            .expect("Unable to write bucket to segment");
         let bucket = segmenter
             .bucket(&first_segment, BUCKETS_PER_SEGMENT as u64 - 1)
             .unwrap();
