@@ -4,6 +4,7 @@ use log::{debug, info, trace};
 use std::fmt;
 use std::io::{self, Read, Seek, Write};
 use std::mem::size_of;
+use std::error::Error;
 
 // The number of records in each bucket.
 // This may be adatped to be parametrizable or dynamic in the future.
@@ -76,6 +77,10 @@ fn normalize_key(hk: u64, local_depth: u64) -> u64 {
 }
 
 impl Bucket {
+    pub fn new() -> Self {
+        Bucket{offset: 0, buf: [0; BUCKET_SIZE]}
+    }
+
     pub fn get(&self, hk: u64) -> Option<Record> {
         debug!("Searching bucket for {}", hk);
         for record in self.iter() {
@@ -192,6 +197,12 @@ impl fmt::Display for BucketFullError {
             "Bucket at offset {} and depth {} overflowed when trying to {}.",
             self.offset, self.local_depth, self.offset
         )
+    }
+}
+
+impl Error for BucketFullError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(self)
     }
 }
 

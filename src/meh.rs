@@ -131,10 +131,38 @@ impl MehDB {
         }
         let new_depth = segment.depth + 1;
         // The buckets that are being allocated to the new segment
-        let new_buckets = Vec::<Bucket>::new();
-        let mask = (hk >> (64 - new_depth));
-        for bucket in self.segmenter.
-
+        let mut new_buckets = Vec::<Bucket>::with_capacity(BUCKETS_PER_SEGMENT);
+        let mask = hk >> (64 - new_depth);
+        for bi in 0..BUCKETS_PER_SEGMENT {
+            let old_bucket = self.segmenter.bucket(&segment, bi as u64)?;
+            let mut new_bucket = Bucket::new();
+            for record in old_bucket.iter() {
+                if record.hash_key & mask == mask {
+                    debug!(
+                        "Insering record with hk {} into new bucket",
+                        record.hash_key
+                    );
+                    new_bucket
+                        .put(record.hash_key, record.value, new_depth)
+                        .context("Inserting record in new bucket.")?;
+                }
+            }
+            new_buckets.push(new_bucket);
+        }
+        let new_segment = match self.segmenter.allocate_with_buckets(new_buckets, new_depth) {
+            Ok(s) => s,
+            Err(e) => return Err(e.context("Allocating new segment with populated buckets.")),
+        };
+        let new_segment_index = header.num_segments;
+        // Update the directory
+        let s = hk >> 64 - header.global_depth;
+        let step = 1 << (header.global_depth - new_depth);
+        let mut start_dir_entry = hk >> 64 - segment.depth;
+        start_dir_entry = start_dir_entry << (header.global_depth - segment.depth);
+        start_dir_entry = start_dir_entry - (start_dir_entry % 2);
+        for i in 0..step {
+            self.directory.set_segment_index(start_dir_entry + i + step, new_segment_index as u32)?;
+        }
         Ok(())
     }
 }
