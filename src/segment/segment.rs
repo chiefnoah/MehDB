@@ -2,7 +2,7 @@ use crate::segment::bucket::{Bucket, BUCKET_SIZE};
 use crate::segment::header::Header;
 use crate::serializer::{DataOrOffset, Serializable};
 use anyhow::{Context, Result};
-use log::{info, warn};
+use log::{info, warn, debug};
 use simple_error::SimpleError;
 use std::collections::HashMap;
 use std::fs::File;
@@ -74,7 +74,7 @@ pub struct BasicSegmenter<B: Read + Write + Seek> {
 
 impl<B: Read + Write + Seek> BasicSegmenter<B> {
     pub fn init(mut buffer: B) -> Result<Self> {
-        buffer.seek(io::SeekFrom::Start(0))?;
+        buffer.seek(io::SeekFrom::Start(0)).context("Seeking to beginning of segment file.")?;
         // Attempt to read the header and use it, otherwise initialize as new
         let mut first_time = false;
         let header = match Header::unpack(&mut buffer) {
@@ -129,15 +129,18 @@ where
     }
 
     fn allocate_segment(&mut self, depth: u64) -> Result<Segment> {
-        let mut header = self.header()?;
+        debug!("Allocating empty segment with depth {}", depth);
+        let mut header = self.header().context("Getting header.")?;
         // Seek to the proper offset
         let offset = (header.num_segments * SEGMENT_SIZE as u64) + size_of::<Header>() as u64;
-        self.buffer.seek(io::SeekFrom::Start(offset))?;
+        debug!("New segment offset: {}", offset);
+        self.buffer.seek(io::SeekFrom::Start(offset))
+            .with_context(|| format!("Seeking to new segment's offset {}", offset))?;
         let mut buf: [u8; SEGMENT_SIZE] = [0; SEGMENT_SIZE];
         buf[..8].copy_from_slice(&depth.to_le_bytes());
-        self.buffer.write(&buf)?;
+        self.buffer.write(&buf).context("Writing new segment bytes")?;
         header.num_segments += 1;
-        self.sync_header(header)?;
+        self.sync_header(header).context("Syncing header.")?;
         Ok(Segment { depth, offset })
     }
 
@@ -165,7 +168,13 @@ where
 
     fn header(&mut self) -> Result<Header> {
         self.buffer.seek(io::SeekFrom::Start(0))?;
-        Header::unpack(&mut self.buffer)
+        match Header::unpack(&mut self.buffer) {
+            Ok(h) => Ok(h),
+            Err(e) => Ok(Header{
+                global_depth: 0,
+                num_segments: 0,
+            })
+        }
     }
 
     fn sync_header(&mut self, header: Header) -> Result<()> {

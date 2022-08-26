@@ -37,7 +37,8 @@ impl MehDB {
         };
         let segment_file_path = path.join("segments.bin");
         let segmenter = file_segmenter(Some(&segment_file_path))
-            .with_context(|| format!("Unable to initialize file_segmenter."))?;
+            .with_context(|| format!("Unable to initialize file_segmenter at path {}",
+                    segment_file_path.into_os_string().into_string().unwrap()))?;
         let mehdb = MehDB {
             hasher_key: highway::Key([53252, 2352323, 563956259, 234832]), // TODO: change this
             directory: MemoryDirectory::init(None, 0),
@@ -86,6 +87,9 @@ impl MehDB {
         match overflow {
             Err(e) => {
                 info!("Bucket overflowed. Allocating new segment and splitting.");
+                let offset = segment.offset;
+                self.split_segment(segment, hash_key[0])
+                    .with_context(|| format!("Bucket overflowed, so splitting segement at offset {}", offset))?;
                 return Err(anyhow!(e));
             }
             _ => {
@@ -115,9 +119,9 @@ impl MehDB {
         bucket.get(hash_key[0])
     }
 
-    fn split_segment(&mut self, segment: Segment, hk: u64, v: u64) -> Result<()> {
+    fn split_segment(&mut self, segment: Segment, hk: u64) -> Result<()> {
         info!("Splitting segment");
-        let header = self.segmenter.header().context("Reading header.")?;
+        let mut header = self.segmenter.header().context("Reading header.")?;
         // If we need to expand the directory size
         if segment.depth == header.global_depth {
             match self.directory.grow() {
@@ -128,6 +132,10 @@ impl MehDB {
                     return Err(anyhow!(e));
                 }
             };
+            // Increment the global_depth so we don't have to re-read the header
+            // This is probably dangerous and we should instead have the directory handle
+            // global_depth
+            header.global_depth += 1;
         }
         let new_depth = segment.depth + 1;
         // The buckets that are being allocated to the new segment
@@ -155,9 +163,17 @@ impl MehDB {
         };
         let new_segment_index = header.num_segments;
         // Update the directory
-        let s = hk >> 64 - header.global_depth;
+        let s = if header.global_depth == 0 {
+            0
+        } else {
+            hk >> 64 - header.global_depth
+        };
         let step = 1 << (header.global_depth - new_depth);
-        let mut start_dir_entry = hk >> 64 - segment.depth;
+        let mut start_dir_entry = if segment.depth == 0 {
+            0
+        } else {
+            hk >> 64 - segment.depth
+        };
         start_dir_entry = start_dir_entry << (header.global_depth - segment.depth);
         start_dir_entry = start_dir_entry - (start_dir_entry % 2);
         for i in 0..step {

@@ -6,11 +6,13 @@ pub trait Directory<C> {
     fn segment_index(&self, i: u64) -> io::Result<u32>;
     fn set_segment_index(&self, i: u64, index: u32) -> io::Result<()>;
     fn grow(&mut self) -> io::Result<u64>;
+    fn global_depth(&mut self) -> io::Result<u32>;
 }
 
 pub struct MemoryDirectory {
     // dir contains the directory and the global depth in a tuple
     dir: RwLock<(Vec<u32>, u32)>,
+    global_depth: u32,
 }
 
 pub struct MemoryDirectoryConfig {}
@@ -22,6 +24,7 @@ impl MemoryDirectory {
         dir.push(initial_index);
         MemoryDirectory {
             dir: RwLock::new((dir, 0)),
+            global_depth: 0
         }
     }
 }
@@ -65,4 +68,10 @@ impl Directory<MemoryDirectoryConfig> for MemoryDirectory {
         dir.1 += 1;
         Ok(len as u64 * 2)
     }
+
+    fn global_depth(&mut self) -> io::Result<u32> {
+        Ok(self.global_depth)
+    }
+
 }
+

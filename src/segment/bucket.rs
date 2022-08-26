@@ -73,7 +73,11 @@ fn normalize_key(hk: u64, local_depth: u64) -> u64 {
     if local_depth == 0 {
         return 0;
     };
-    hk >> (64 - local_depth)
+    return if local_depth == 0 {
+        0
+    } else {
+        hk >> (64 - local_depth)
+    }
 }
 
 impl Bucket {
@@ -100,15 +104,16 @@ impl Bucket {
     fn maybe_index_to_insert(&self, hk: u64, value: u64, local_depth: u64) -> Option<usize> {
         for (i, record) in self.iter().enumerate() {
             trace!(
-                "Index: {}\t hk: {}\tvalue: {}",
-                i, record.hash_key, record.value
+                "Index: {}\t hk: {}\tvalue: {}\tlocal_depth: {}",
+                i, record.hash_key, record.value, local_depth
             );
             if record.hash_key == 0 && record.value == 0 {
                 debug!("Found empty slot to insert record at index {}.", i);
                 return Some(i);
             } else if record.hash_key == hk {
                 return Some(i);
-            } else if normalize_key(record.hash_key, local_depth) & normalize_key(hk, local_depth)
+            } else if normalize_key(record.hash_key, local_depth) 
+                & normalize_key(hk, local_depth)
                 != normalize_key(hk, local_depth)
             {
                 debug!("Replacing {} with new record", record.hash_key);
