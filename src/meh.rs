@@ -121,9 +121,9 @@ impl MehDB {
 
     fn split_segment(&mut self, segment: Segment, hk: u64) -> Result<()> {
         info!("Splitting segment");
-        let mut header = self.segmenter.header().context("Reading header.")?;
+        let mut global_depth = self.directory.global_depth()?;
         // If we need to expand the directory size
-        if segment.depth == header.global_depth {
+        if segment.depth == global_depth as u64{
             match self.directory.grow() {
                 Ok(i) => {
                     debug!("Grew directory: {}", i);
@@ -135,7 +135,7 @@ impl MehDB {
             // Increment the global_depth so we don't have to re-read the header
             // This is probably dangerous and we should instead have the directory handle
             // global_depth
-            header.global_depth += 1;
+            global_depth += 1;
         }
         let new_depth = segment.depth + 1;
         // The buckets that are being allocated to the new segment
@@ -157,27 +157,26 @@ impl MehDB {
             }
             new_buckets.push(new_bucket);
         }
-        let new_segment = match self.segmenter.allocate_with_buckets(new_buckets, new_depth) {
+        let (new_segment_index, new_segment) = match self.segmenter.allocate_with_buckets(new_buckets, new_depth) {
             Ok(s) => s,
             Err(e) => return Err(e.context("Allocating new segment with populated buckets.")),
         };
-        let new_segment_index = header.num_segments;
         // Update the directory
-        let s = if header.global_depth == 0 {
+        let s = if global_depth == 0 {
             0
         } else {
-            hk >> 64 - header.global_depth
+            hk >> 64 - global_depth
         };
-        let step = 1 << (header.global_depth - new_depth);
+        let step = 1 << (global_depth as u64- new_depth);
         let mut start_dir_entry = if segment.depth == 0 {
             0
         } else {
             hk >> 64 - segment.depth
         };
-        start_dir_entry = start_dir_entry << (header.global_depth - segment.depth);
+        start_dir_entry = start_dir_entry << (global_depth as u64 - segment.depth);
         start_dir_entry = start_dir_entry - (start_dir_entry % 2);
         for i in 0..step {
-            self.directory.set_segment_index(start_dir_entry + i + step, new_segment_index as u32)?;
+            self.directory.set_segment_index(start_dir_entry + i + step, new_segment_index)?;
         }
         Ok(())
     }

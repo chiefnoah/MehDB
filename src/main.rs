@@ -27,7 +27,7 @@ fn main() -> Result<()>{
             .with_context(|| {
                 format!("Error inserting record")
             })?;
-    }
+    };
     info!("Done putting, trying to read now...");
     for i in 0..662 {
         let i = i as u64;

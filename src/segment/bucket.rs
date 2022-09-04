@@ -70,6 +70,8 @@ impl Serializable for Bucket {
 
 /// Gets the effective key
 fn normalize_key(hk: u64, local_depth: u64) -> u64 {
+    debug!("hk: {}\tlocal_depth: {}", hk, local_depth);
+    assert!(local_depth < 64);
     if local_depth == 0 {
         return 0;
     };
