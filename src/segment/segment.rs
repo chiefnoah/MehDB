@@ -75,6 +75,9 @@ pub trait Segmenter {
     /// duration of it's use. That is, if you support concurrent segement creation, this method
     /// should only be called inside a syncronized block.
     fn num_segments(&mut self) -> Result<u64>;
+    /// Updates the local_depth of `Segment`. Implementations that allow for concurrent access
+    /// should take care to prevent race conditions.
+    fn set_segment_depth(&mut self, segment: Segment, new_depth: u64) -> Result<()>;
 }
 
 impl Serializable for u64 {

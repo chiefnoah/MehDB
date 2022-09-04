@@ -41,7 +41,7 @@ impl MehDB {
                     segment_file_path.into_os_string().into_string().unwrap()))?;
         let mehdb = MehDB {
             hasher_key: highway::Key([53252, 2352323, 563956259, 234832]), // TODO: change this
-            directory: MemoryDirectory::init(None, 0),
+            directory: MemoryDirectory::init(0),
             segmenter,
         };
         Ok(mehdb)
@@ -132,20 +132,19 @@ impl MehDB {
                     return Err(anyhow!(e));
                 }
             };
-            // Increment the global_depth so we don't have to re-read the header
-            // This is probably dangerous and we should instead have the directory handle
-            // global_depth
-            global_depth += 1;
+            // Re-read the global_depth post-grow call. For most implementations, it should be
+            // previous value + 1
+            global_depth = self.directory.global_depth()?
         }
         let new_depth = segment.depth + 1;
         // The buckets that are being allocated to the new segment
         let mut new_buckets = Vec::<Bucket>::with_capacity(BUCKETS_PER_SEGMENT);
-        let mask = hk >> (64 - new_depth);
+        let mask = (hk >> (64 - new_depth)) | 1;
         for bi in 0..BUCKETS_PER_SEGMENT {
             let old_bucket = self.segmenter.bucket(&segment, bi as u64)?;
             let mut new_bucket = Bucket::new();
             for record in old_bucket.iter() {
-                if record.hash_key & mask == mask {
+                if (record.hash_key >> 64 - new_depth) & mask == mask {
                     debug!(
                         "Insering record with hk {} into new bucket",
                         record.hash_key
@@ -157,16 +156,14 @@ impl MehDB {
             }
             new_buckets.push(new_bucket);
         }
+        //TODO: refactor this to be more idiomatic
         let (new_segment_index, new_segment) = match self.segmenter.allocate_with_buckets(new_buckets, new_depth) {
             Ok(s) => s,
             Err(e) => return Err(e.context("Allocating new segment with populated buckets.")),
         };
         // Update the directory
-        let s = if global_depth == 0 {
-            0
-        } else {
-            hk >> 64 - global_depth
-        };
+        assert!(global_depth > 0);
+        let s = hk >> 64 - global_depth;
         let step = 1 << (global_depth as u64- new_depth);
         let mut start_dir_entry = if segment.depth == 0 {
             0

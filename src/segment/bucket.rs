@@ -1,10 +1,10 @@
 use crate::serializer::Serializable;
-use anyhow::{Result, Context};
+use anyhow::{Context, Result};
 use log::{debug, info, trace};
+use std::error::Error;
 use std::fmt;
 use std::io::{self, Read, Seek, Write};
 use std::mem::size_of;
-use std::error::Error;
 
 // The number of records in each bucket.
 // This may be adatped to be parametrizable or dynamic in the future.
@@ -36,7 +36,7 @@ impl Record {
     pub fn from_bytes(buf: [u8; size_of::<Self>()]) -> Self {
         let hash_key = u64::from_le_bytes(buf[0..8].try_into().unwrap());
         let value = u64::from_le_bytes(buf[8..16].try_into().unwrap());
-        Self{hash_key, value}
+        Self { hash_key, value }
     }
 }
 
@@ -48,9 +48,9 @@ pub struct Bucket {
 impl Serializable for Bucket {
     fn pack<W: Write + Seek>(&self, buffer: &mut W) -> Result<u64> {
         let offset = buffer.seek(io::SeekFrom::Start(self.offset))?;
-        buffer.write(&self.buf).with_context(|| {
-            format!("Error packing bucket into buffer")
-        })?;
+        buffer
+            .write(&self.buf)
+            .context("Error packing bucket into buffer")?;
         Ok(offset)
     }
 
@@ -60,9 +60,11 @@ impl Serializable for Bucket {
             offset,
             buf: [0; BUCKET_SIZE],
         };
-        buffer.read_exact(&mut bucket.buf)
-            .with_context(|| {
-            format!("Error reading buffer when unpacking bucket at offset {}", offset)
+        buffer.read_exact(&mut bucket.buf).with_context(|| {
+            format!(
+                "Error reading buffer when unpacking bucket at offset {}",
+                offset
+            )
         })?;
         Ok(bucket)
     }
@@ -79,21 +81,21 @@ fn normalize_key(hk: u64, local_depth: u64) -> u64 {
         0
     } else {
         hk >> (64 - local_depth)
-    }
+    };
 }
 
 impl Bucket {
     pub fn new() -> Self {
-        Bucket{offset: 0, buf: [0; BUCKET_SIZE]}
+        Bucket {
+            offset: 0,
+            buf: [0; BUCKET_SIZE],
+        }
     }
 
     pub fn get(&self, hk: u64) -> Option<Record> {
         debug!("Searching bucket for {}", hk);
         for record in self.iter() {
-            debug!(
-                "Found hk: {}\tvalue: {}",
-                record.hash_key, record.value
-            );
+            debug!("Found hk: {}\tvalue: {}", record.hash_key, record.value);
             if record.hash_key == hk {
                 return Some(record);
             }
@@ -107,22 +109,24 @@ impl Bucket {
         for (i, record) in self.iter().enumerate() {
             trace!(
                 "Index: {}\t hk: {}\tvalue: {}\tlocal_depth: {}",
-                i, record.hash_key, record.value, local_depth
+                i,
+                record.hash_key,
+                record.value,
+                local_depth
             );
             if record.hash_key == 0 && record.value == 0 {
                 debug!("Found empty slot to insert record at index {}.", i);
                 return Some(i);
             } else if record.hash_key == hk {
                 return Some(i);
-            } else if normalize_key(record.hash_key, local_depth) 
-                & normalize_key(hk, local_depth)
+            } else if normalize_key(record.hash_key, local_depth) & normalize_key(hk, local_depth)
                 != normalize_key(hk, local_depth)
             {
                 debug!("Replacing {} with new record", record.hash_key);
                 // return the index we're inserting at
                 return Some(i);
             }
-        };
+        }
         None
     }
 
@@ -145,7 +149,10 @@ impl Bucket {
             }
             Some(i) => i,
         };
-        let record = Record {hash_key: hk, value};
+        let record = Record {
+            hash_key: hk,
+            value,
+        };
         let bytes = record.to_bytes();
         trace!("Record bytes: {:?}", &bytes);
         let offset = index * size_of::<Record>();
@@ -201,8 +208,8 @@ impl fmt::Display for BucketFullError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "Bucket at offset {} and depth {} overflowed when trying to {}.",
-            self.offset, self.local_depth, self.offset
+            "Bucket at offset {} and depth {} overflowed when trying to insert {}.",
+            self.offset, self.local_depth, self.hash_key
         )
     }
 }
@@ -356,7 +363,10 @@ mod test {
 
     #[test]
     fn record_can_go_to_from_bytes() {
-        let record = Record{hash_key: 0xF000000000000000, value: 1234};
+        let record = Record {
+            hash_key: 0xF000000000000000,
+            value: 1234,
+        };
         let bytes = record.to_bytes();
         let de_record = Record::from_bytes(bytes);
         assert_eq!(de_record.hash_key, record.hash_key);

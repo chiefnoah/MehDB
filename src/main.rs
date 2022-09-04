@@ -24,10 +24,9 @@ fn main() -> Result<()>{
         let key = ByteKey(i.to_le_bytes().to_vec());
         let value = ByteValue(i * 2);
         db.put(key, value)
-            .with_context(|| {
-                format!("Error inserting record")
-            })?;
-    };
+            .context("Error inserting record")
+            .expect("Unable to insert record");
+    }
     info!("Done putting, trying to read now...");
     for i in 0..662 {
         let i = i as u64;
