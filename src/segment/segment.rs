@@ -380,4 +380,26 @@ mod tests {
             .expect("Unable to read last bucket.");
         assert_eq!(last_bucket_first_segment.get(123).unwrap().value, 456);
     }
+
+    use crate::segment::bucket::BUCKET_RECORDS;
+    #[test]
+    fn allocate_many_segments() {
+        let mut segmenter = inmemory_segmenter();
+        for z in 1..10 {
+            let mut buckets = Vec::<Bucket>::with_capacity(BUCKETS_PER_SEGMENT);
+            for i in 0..BUCKETS_PER_SEGMENT {
+                let mut bucket: Bucket = Default::default();
+                for y in 0..BUCKET_RECORDS {
+                    let k: u64 = (z * i * y) as u64;
+                    let v: u64 = k * 2;
+                    bucket.put(k, v, 0).unwrap();
+                }
+                buckets.push(bucket);
+            }
+            segmenter.allocate_with_buckets(buckets, 0).unwrap();
+        }
+
+        // This test should check that we can retrieve all of the records we insert
+        todo!("Finish this test.");
+    }
 }

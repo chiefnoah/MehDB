@@ -181,9 +181,6 @@ impl MehDB {
                 Ok(s) => s,
                 Err(e) => return Err(e.context("Allocating new segment with populated buckets.")),
             };
-        // Update the directory
-        debug!("Global depth: {}", global_depth);
-        assert!(global_depth > 0);
         let s = hk >> 64 - global_depth;
         let step = 1 << (global_depth as u64 - new_depth);
         let mut start_dir_entry = if segment.depth == 0 {
@@ -197,6 +194,7 @@ impl MehDB {
             self.directory
                 .set_segment_index(start_dir_entry + i + step, new_segment_index)?;
         }
+        // Update the original 
         segment.depth += 1;
         self.segmenter.update_segment(segment).context("Updating existing segment depth")?;
         Ok(())

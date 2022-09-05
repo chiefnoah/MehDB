@@ -36,9 +36,9 @@ fn main() -> Result<()>{
     for i in 0..RECORDS {
         let i = i as u64;
         let key = ByteKey(i.to_le_bytes().to_vec());
-        let r = db.get(key).expect(&format!("Missing record for {}", i));
+        let r = db.get(key); //.expect(&format!("Missing record for {}", i));
         println!("k: {} v: {:?}", i, r);
-        assert_eq!(r.value, i * 2);
+        //assert_eq!(r.value, i * 2);
     }
     Ok(())
 }

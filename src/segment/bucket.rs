@@ -2,13 +2,14 @@ use crate::serializer::Serializable;
 use anyhow::{Context, Result};
 use log::{debug, info, trace};
 use std::error::Error;
+use std::default::Default;
 use std::fmt;
 use std::io::{self, Read, Seek, Write};
 use std::mem::size_of;
 
 // The number of records in each bucket.
 // This may be adatped to be parametrizable or dynamic in the future.
-const BUCKET_RECORDS: usize = 16;
+pub const BUCKET_RECORDS: usize = 16;
 pub const BUCKET_SIZE: usize = BUCKET_RECORDS * size_of::<Record>();
 
 #[derive(Debug)]
@@ -43,6 +44,15 @@ impl Record {
 pub struct Bucket {
     pub offset: u64,
     buf: [u8; BUCKET_SIZE],
+}
+
+impl Default for Bucket {
+    fn default() -> Self {
+        Self {
+            offset: 0,
+            buf: [0; BUCKET_SIZE]
+        }
+    }
 }
 
 impl Serializable for Bucket {
@@ -113,8 +123,7 @@ impl Bucket {
                 return Some(i);
             } else if record.hash_key == hk {
                 return Some(i);
-            } else if normalize_key(record.hash_key, local_depth) != local_mask
-            {
+            } else if normalize_key(record.hash_key, local_depth) != local_mask {
                 debug!("Replacing {} with new record", record.hash_key);
                 // return the index we're inserting at
                 return Some(i);
