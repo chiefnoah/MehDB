@@ -47,7 +47,7 @@ pub struct Bucket {
 
 impl Serializable for Bucket {
     fn pack<W: Write + Seek>(&self, buffer: &mut W) -> Result<u64> {
-        let offset = buffer.seek(io::SeekFrom::Start(self.offset))?;
+        let offset = buffer.seek(io::SeekFrom::Current(0))?;
         buffer
             .write(&self.buf)
             .context("Error packing bucket into buffer")?;
@@ -72,16 +72,11 @@ impl Serializable for Bucket {
 
 /// Gets the effective key
 fn normalize_key(hk: u64, local_depth: u64) -> u64 {
-    debug!("hk: {}\tlocal_depth: {}", hk, local_depth);
-    assert!(local_depth < 64);
+    assert!(local_depth <= 64);
     if local_depth == 0 {
         return 0;
-    };
-    return if local_depth == 0 {
-        0
-    } else {
-        hk >> (64 - local_depth)
-    };
+    }
+    return hk >> (64 - local_depth);
 }
 
 impl Bucket {
@@ -103,9 +98,8 @@ impl Bucket {
         None
     }
 
-    fn _put(&mut self, index: usize, hk: u64, value: u64) {}
-
     fn maybe_index_to_insert(&self, hk: u64, value: u64, local_depth: u64) -> Option<usize> {
+        let local_mask = normalize_key(hk, local_depth);
         for (i, record) in self.iter().enumerate() {
             trace!(
                 "Index: {}\t hk: {}\tvalue: {}\tlocal_depth: {}",
@@ -119,8 +113,7 @@ impl Bucket {
                 return Some(i);
             } else if record.hash_key == hk {
                 return Some(i);
-            } else if normalize_key(record.hash_key, local_depth) & normalize_key(hk, local_depth)
-                != normalize_key(hk, local_depth)
+            } else if normalize_key(record.hash_key, local_depth) != local_mask
             {
                 debug!("Replacing {} with new record", record.hash_key);
                 // return the index we're inserting at
@@ -234,6 +227,7 @@ mod test {
         // change this so we have something to check for
         bucket.buf[0] = 255;
         let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        buf.seek(io::SeekFrom::Start(5)).unwrap();
         let res = bucket.pack::<Cursor<Vec<u8>>>(&mut buf);
         let res = match bucket.pack::<Cursor<Vec<u8>>>(&mut buf) {
             Err(e) => panic!("Unable to pack bucket: {}", e),

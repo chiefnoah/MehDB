@@ -36,9 +36,12 @@ impl MehDB {
             None => Path::new("."),
         };
         let segment_file_path = path.join("segments.bin");
-        let segmenter = file_segmenter(Some(&segment_file_path))
-            .with_context(|| format!("Unable to initialize file_segmenter at path {}",
-                    segment_file_path.into_os_string().into_string().unwrap()))?;
+        let segmenter = file_segmenter(Some(&segment_file_path)).with_context(|| {
+            format!(
+                "Unable to initialize file_segmenter at path {}",
+                segment_file_path.into_os_string().into_string().unwrap()
+            )
+        })?;
         let mehdb = MehDB {
             hasher_key: highway::Key([53252, 2352323, 563956259, 234832]), // TODO: change this
             directory: MemoryDirectory::init(0),
@@ -69,7 +72,7 @@ impl MehDB {
         // and we *definitely* don't have the RAM to.
         // TODO: support the full 256 bit keyspace for magical distributed system support
         let hash_key = hasher.hash256(&key.0);
-        info!("hash_key: {:?}", hash_key);
+        info!("hash_key: {:?}\tvalue: {}", hash_key, value.0);
         let segment_offset = self
             .directory
             .segment_index(hash_key[0])
@@ -81,16 +84,27 @@ impl MehDB {
             .with_context(|| format!("Unable to read segment at offset {}", segment_offset))?;
         let bucket_index = (BUCKETS_PER_SEGMENT - 1) as u64 & hash_key[3];
         debug!("Reading bucket at index: {}", bucket_index);
-        let mut bucket = self.segmenter.bucket(&segment, bucket_index)?;
+        let mut bucket = self
+            .segmenter
+            .bucket(&segment, bucket_index)
+            .with_context(|| format!("Reading bucket at index {}", bucket_index))?;
         debug!("Inserting record into bucket...");
         let overflow = bucket.put(hash_key[0], value.0, segment.depth);
         match overflow {
             Err(e) => {
                 info!("Bucket overflowed. Allocating new segment and splitting.");
                 let offset = segment.offset;
-                self.split_segment(segment, hash_key[0])
-                    .with_context(|| format!("Bucket overflowed, so splitting segement at offset {}", offset))?;
-                return Err(anyhow!(e));
+                self.split_segment(segment, hash_key[0]).with_context(|| {
+                    format!(
+                        "Splitting segement at offset {}",
+                        offset
+                    )
+                })?;
+                // TODO: don't be so inneficient. We already know the hash_key!
+                // Call put again, it may end up in a new bucket or in the same one that's now had
+                // some records migrated to a new segment.
+                warn!("Re-inserting record.");
+                return self.put(key, value);
             }
             _ => {
                 debug!("Successfully inserted record to bucket.");
@@ -121,20 +135,24 @@ impl MehDB {
 
     fn split_segment(&mut self, segment: Segment, hk: u64) -> Result<()> {
         info!("Splitting segment");
+        let mut segment = segment;
         let mut global_depth = self.directory.global_depth()?;
         // If we need to expand the directory size
-        if segment.depth == global_depth as u64{
+        if segment.depth == global_depth as u64 {
             match self.directory.grow() {
                 Ok(i) => {
-                    debug!("Grew directory: {}", i);
+                    // Re-read the global_depth post-grow call. For most implementations, it should be
+                    // previous value + 1
+                    global_depth = self.directory.global_depth()?;
+                    debug!(
+                        "Grew directory. New depth: {}\tNew size: {}",
+                        global_depth, i
+                    );
                 }
                 Err(e) => {
                     return Err(anyhow!(e));
                 }
             };
-            // Re-read the global_depth post-grow call. For most implementations, it should be
-            // previous value + 1
-            global_depth = self.directory.global_depth()?
         }
         let new_depth = segment.depth + 1;
         // The buckets that are being allocated to the new segment
@@ -157,14 +175,17 @@ impl MehDB {
             new_buckets.push(new_bucket);
         }
         //TODO: refactor this to be more idiomatic
-        let (new_segment_index, new_segment) = match self.segmenter.allocate_with_buckets(new_buckets, new_depth) {
-            Ok(s) => s,
-            Err(e) => return Err(e.context("Allocating new segment with populated buckets.")),
-        };
+        warn!("Allocating new segment with depth {}", new_depth);
+        let (new_segment_index, new_segment) =
+            match self.segmenter.allocate_with_buckets(new_buckets, new_depth) {
+                Ok(s) => s,
+                Err(e) => return Err(e.context("Allocating new segment with populated buckets.")),
+            };
         // Update the directory
+        debug!("Global depth: {}", global_depth);
         assert!(global_depth > 0);
         let s = hk >> 64 - global_depth;
-        let step = 1 << (global_depth as u64- new_depth);
+        let step = 1 << (global_depth as u64 - new_depth);
         let mut start_dir_entry = if segment.depth == 0 {
             0
         } else {
@@ -173,8 +194,11 @@ impl MehDB {
         start_dir_entry = start_dir_entry << (global_depth as u64 - segment.depth);
         start_dir_entry = start_dir_entry - (start_dir_entry % 2);
         for i in 0..step {
-            self.directory.set_segment_index(start_dir_entry + i + step, new_segment_index)?;
+            self.directory
+                .set_segment_index(start_dir_entry + i + step, new_segment_index)?;
         }
+        segment.depth += 1;
+        self.segmenter.update_segment(segment).context("Updating existing segment depth")?;
         Ok(())
     }
 }

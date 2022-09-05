@@ -4,10 +4,13 @@ use std::fs::File;
 use std::io;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use anyhow::Result;
+use anyhow::{Context, Result};
 
+/// Types that implement `Serializable` should pack all or some of their properties into the
+/// provided buffer. It is not a requirement to call `Write::flush()`, it should be assumed that it
+/// will be called elsewhere to allow for case-by-case control over when the buffer gets flushed.
 pub trait Serializable: Sized {
-    // TODO: no more Option or tagged result
+    /// p
     fn pack<W: Write + Seek>(&self, file: &mut W) -> Result<u64>;
     fn unpack<R: Read + Seek>(buffer: &mut R) -> Result<Self>;
 }
@@ -74,7 +77,7 @@ impl SimpleFileTransactor {
         let epoch = if file_metadata.len() > 8 {
             info!("Initializing transactor from previous file.");
             let mut buf: [u8; 8] = [0; 8];
-            file.read_exact(&mut buf[..])?;
+            file.read_exact(&mut buf[..]).context("Trying ")?;
             Duration::from_millis(u64::from_le_bytes(buf))
         } else {
             info!("Initializing new transactor");
@@ -83,7 +86,8 @@ impl SimpleFileTransactor {
                 .duration_since(UNIX_EPOCH)
                 .expect("Time went backwards");
             let b = u64::try_from(e.as_millis()).unwrap().to_le_bytes();
-            file.write(&b)?;
+            file.write(&b).context("Writing new file transactor.")?;
+            file.flush().context("Flushing new file transactor buffer")?;
             e
         };
         Ok(SimpleFileTransactor {

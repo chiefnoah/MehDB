@@ -1,4 +1,4 @@
-use log::info;
+use log::{info, warn};
 use parking_lot::RwLock;
 use std::io;
 
@@ -12,7 +12,6 @@ pub trait Directory {
 pub struct MemoryDirectory {
     // dir contains the directory and the global depth in a tuple
     dir: RwLock<(Vec<u64>, u32)>,
-    global_depth: u32,
 }
 
 
@@ -23,7 +22,6 @@ impl MemoryDirectory {
         dir.push(initial_index);
         MemoryDirectory {
             dir: RwLock::new((dir, 0)),
-            global_depth: 0
         }
     }
 }
@@ -58,18 +56,23 @@ impl Directory for MemoryDirectory {
     fn grow(&mut self) -> io::Result<u64> {
         let mut dir = self.dir.write();
         let len = dir.0.len();
+        warn!("Growing directory. New size: {}", len * 2);
+        // Copy so we can use `iter()` later
+        // You shouldn't do this if we're backing to disk
         let dir_copy = dir.0.clone();
         dir.0.resize(len * 2, 0);
         for (i, r) in dir_copy.iter().enumerate() {
             dir.0[i * 2] = *r;
             dir.0[(i * 2) + 1] = *r;
         }
-        dir.1 += 1;
+        (*dir).1 += 1;
         Ok(len as u64 * 2)
     }
 
     fn global_depth(&mut self) -> io::Result<u32> {
-        Ok(self.global_depth)
+        // Get a read-only handle on the directory
+        let dir = self.dir.read();
+        Ok(dir.1)
     }
 
 }
