@@ -37,9 +37,8 @@ fn main() -> Result<()>{
     for i in 0..RECORDS {
         let i = i as u64;
         let key = ByteKey(i.to_le_bytes().to_vec());
-        let _ = db.get(key).expect(&format!("Missing record for {}", i));
-        //println!("k: {} v: {:?}", i, r);
-        //assert_eq!(r.value, i * 2);
+        let r = db.get(key).expect(&format!("Missing record for {}", i));
+        info!("k: {} v: {:?}", i, r);
     }
     let end_time = start_time.elapsed().as_secs_f64();
     println!("Elapsed time: {:.2?}\nAvg gets/s: {:.2}", end_time, RECORDS as f64 / end_time);

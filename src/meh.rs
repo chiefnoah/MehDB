@@ -29,6 +29,7 @@ pub struct MehDB {
 
 const HEADER_SIZE: u64 = 16;
 
+/// A Extendible hashing implementation that does not support multithreading.
 impl MehDB {
     // New creates a new instance of MehDB with it's data in optional path.
     pub fn init(path: Option<&Path>) -> Result<Self> {

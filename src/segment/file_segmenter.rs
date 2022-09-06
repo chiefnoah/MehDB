@@ -1,5 +1,4 @@
 use crate::serializer::{DataOrOffset, Serializable};
-use crate::segment::header::Header;
 use crate::segment::bucket::{Bucket, BUCKET_SIZE};
 use crate::segment::BasicSegmenter;
 use simple_error::SimpleError;
@@ -19,7 +18,6 @@ use log::info;
 const BUCKETS_PER_SEGMENT: usize = 64;
 // The size on-disk of a segment
 const SEGMENT_SIZE: usize = (BUCKET_SIZE * BUCKETS_PER_SEGMENT) + 8;
-const SEGMENT_HEADER_SIZE: usize = size_of::<Header>();
 
 
 pub fn file_segmenter(path: Option<&Path>) -> Result<BasicSegmenter<File>> {
