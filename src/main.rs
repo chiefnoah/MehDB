@@ -13,13 +13,13 @@ use crate::meh::MehDB;
 use crate::serializer::{ByteKey, ByteValue};
 use anyhow::{Result, Context};
 use log::info;
-use std::time::{Instant};
+use std::time::Instant;
 
 
 fn main() -> Result<()>{
     pretty_env_logger::init();
     let mut db: MehDB = MehDB::init(None).unwrap();
-    const RECORDS: usize = 1_000_000;
+    const RECORDS: usize = 10_000_000;
     let start_time = Instant::now();
     for i in 0..RECORDS {
         info!("i: {}", i);
