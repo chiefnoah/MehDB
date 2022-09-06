@@ -3,6 +3,8 @@ use parking_lot::RwLock;
 use std::io;
 
 pub trait Directory {
+    type Config;
+    fn init(config: Self::Config) -> Self;
     fn segment_index(&self, i: u64) -> io::Result<u64>;
     fn set_segment_index(&self, i: u64, index: u64) -> io::Result<()>;
     fn grow(&mut self) -> io::Result<u64>;
@@ -15,8 +17,10 @@ pub struct MemoryDirectory {
 }
 
 
-impl MemoryDirectory {
-    pub fn init(initial_index: u64) -> Self {
+impl Directory for MemoryDirectory {
+    type Config = u64;
+
+    fn init(initial_index: Self::Config) -> Self {
         info!("Initializing new MemoryDirectory");
         let mut dir: Vec<u64> = Vec::with_capacity(1);
         dir.push(initial_index);
@@ -24,9 +28,7 @@ impl MemoryDirectory {
             dir: RwLock::new((dir, 0)),
         }
     }
-}
 
-impl Directory for MemoryDirectory {
     fn segment_index(&self, i: u64) -> io::Result<u64> {
         let unlocked = self.dir.read();
         let dir: &Vec<u64> = &unlocked.0;
@@ -77,3 +79,6 @@ impl Directory for MemoryDirectory {
 
 }
 
+pub struct TestDirectory {
+
+}
