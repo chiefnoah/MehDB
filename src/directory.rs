@@ -1,6 +1,9 @@
 use log::{info, warn};
 use parking_lot::RwLock;
 use std::io;
+use std::fs::{File, OpenOptions};
+use memmap::{Mmap, MmapMut};
+
 
 pub trait Directory {
     type Config;
@@ -79,6 +82,12 @@ impl Directory for MemoryDirectory {
 
 }
 
-pub struct TestDirectory {
+pub struct MMapDirectory {
+    map: Mmap,
+}
 
+impl MemoryDirectory {
+    pub fn init(path: Option<Path>) -> Self {
+
+    }
 }
