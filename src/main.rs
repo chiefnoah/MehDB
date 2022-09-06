@@ -30,8 +30,8 @@ fn main() -> Result<()>{
             .context("Error inserting record")
             .expect("Unable to insert record!");
     }
-    let end_time = start_time.elapsed();
-    println!("Elapsed time: {:.2?}\nAvg inserts/us: {}", end_time, RECORDS as f64 / end_time.as_secs_f64());
+    let end_time = start_time.elapsed().as_secs_f64();
+    println!("Elapsed time: {:.2?}\nAvg inserts/us: {:.2}", end_time, RECORDS as f64 / end_time);
     info!("Done putting, trying to read now...");
     let start_time = Instant::now();
     for i in 0..RECORDS {
@@ -41,7 +41,7 @@ fn main() -> Result<()>{
         //println!("k: {} v: {:?}", i, r);
         //assert_eq!(r.value, i * 2);
     }
-    let end_time = start_time.elapsed();
-    println!("Elapsed time: {:.2?}\nAvg gets/s: {}", end_time, RECORDS as f64 / end_time.as_secs_f64());
+    let end_time = start_time.elapsed().as_secs_f64();
+    println!("Elapsed time: {:.2?}\nAvg gets/s: {:.2}", end_time, RECORDS as f64 / end_time);
     Ok(())
 }
