@@ -28,7 +28,7 @@ impl Serializable for Segment {
     /// packs a Segment's depth. Assumes buffer has alread Seeked to offset
     fn pack<W: Write + Seek>(&self, buffer: &mut W) -> Result<u64> {
         buffer
-            .write(&self.depth.to_le_bytes())
+            .write_all(&self.depth.to_le_bytes())
             .with_context(|| format!("Error packing segmenter at offset {}", self.offset))?;
         Ok(self.offset)
     }
@@ -135,7 +135,7 @@ impl<B: Read + Write + Seek> BasicSegmenter<B> {
             .seek(io::SeekFrom::Start(0))
             .context("Seeking to beginning of segment file.")?;
         self.buffer
-            .write(&self.num_segments.to_le_bytes())
+            .write_all(&self.num_segments.to_le_bytes())
             .context("Syncing num_segments")?;
         self.buffer.flush()?;
         Ok(())
@@ -181,7 +181,7 @@ where
         let mut buf: [u8; SEGMENT_SIZE] = [0; SEGMENT_SIZE];
         buf[..8].copy_from_slice(&depth.to_le_bytes());
         self.buffer
-            .write(&buf)
+            .write_all(&buf)
             .context("Writing new segment bytes")?;
         self.buffer
             .flush()
@@ -207,24 +207,30 @@ where
         // We create a BufWriter because we're going to be writing a lot and don't want to flush it
         // until we're done.
         let mut buffer = BufWriter::with_capacity(SEGMENT_SIZE as usize, &mut self.buffer);
-        buffer.seek(io::SeekFrom::Start(offset)).context("Seeking to new segment location")?;
+        buffer
+            .seek(io::SeekFrom::Start(offset))
+            .context("Seeking to new segment location")?;
         let mut buf: [u8; 8] = [0; 8];
         buf[..].copy_from_slice(&depth.to_le_bytes());
-        buffer.write(&buf).context("Writing new segment's depth.")?;
+        buffer.write_all(&buf).context("Writing new segment's depth.")?;
         for (i, bucket) in buckets.iter().enumerate() {
             info!("Writing bucket with index {}", i);
-            bucket.pack(&mut buffer).with_context(|| {
-                format!("Writing bucket with index {}", i)
-            })?;
+            bucket
+                .pack(&mut buffer)
+                .with_context(|| format!("Writing bucket with index {}", i))?;
         }
-        buffer.flush()
+        buffer
+            .flush()
             .context("Flushing outer buffer after segment allocate.")?;
         drop(buffer);
         let index = self.num_segments;
         self.num_segments += 1;
         self.write_num_segments()
             .context("Syncronizing num_segments after allocating.")?;
-        let end_of_buffer = self.buffer.seek(io::SeekFrom::End(0)).context("Seeking to end of buffer")?;
+        let end_of_buffer = self
+            .buffer
+            .seek(io::SeekFrom::End(0))
+            .context("Seeking to end of buffer")?;
         warn!("End of buffer: {}", end_of_buffer);
         Ok((index, Segment { offset, depth }))
     }
@@ -233,13 +239,17 @@ where
         assert!(index < BUCKETS_PER_SEGMENT as u64);
         //----------------------------------------------------------👇 for segment_depth
         let offset = segment.offset + (index * BUCKET_SIZE as u64) + 8;
-        self.buffer.seek(io::SeekFrom::Start(offset)).context("Seeking to bucket's offset")?;
+        self.buffer
+            .seek(io::SeekFrom::Start(offset))
+            .context("Seeking to bucket's offset")?;
         info!("Reading bucket at offset {}", offset);
         return Bucket::unpack(&mut self.buffer);
     }
 
     fn write_bucket(&mut self, bucket: &Bucket) -> Result<()> {
-        self.buffer.seek(io::SeekFrom::Start(bucket.offset)).context("Seeking to bucket's offset")?;
+        self.buffer
+            .seek(io::SeekFrom::Start(bucket.offset))
+            .context("Seeking to bucket's offset")?;
         bucket.pack(&mut self.buffer)?;
         self.buffer.flush()?;
         Ok(())
@@ -252,10 +262,11 @@ where
     fn update_segment(&mut self, segment: Segment) -> Result<()> {
         warn!("Updating segment depth to {}", segment.depth);
         self.buffer.seek(io::SeekFrom::Start(segment.offset))?;
-        self.buffer.write(&segment.depth.to_le_bytes())?;
+        self.buffer.write_all(&segment.depth.to_le_bytes())?;
         self.buffer.flush()?;
         if self.segment_depth_cache.contains_key(&segment.offset) {
-            self.segment_depth_cache.insert(segment.offset, segment.depth);
+            self.segment_depth_cache
+                .insert(segment.offset, segment.depth);
         }
         Ok(())
     }
@@ -351,9 +362,15 @@ mod tests {
         let mut last_bucket_first_segment = segmenter
             .bucket(&segment, BUCKETS_PER_SEGMENT as u64 - 1)
             .expect("Unable to read last bucket.");
-        last_bucket_first_segment.put(123, 456, 0).expect("Unable to insert record into bucket.");
-        segmenter.write_bucket(&last_bucket_first_segment).expect("Saving bucket back to ");
-        segmenter.allocate_segment(0).expect("Unable to allocate segment");
+        last_bucket_first_segment
+            .put(123, 456, 0)
+            .expect("Unable to insert record into bucket.");
+        segmenter
+            .write_bucket(&last_bucket_first_segment)
+            .expect("Saving bucket back to ");
+        segmenter
+            .allocate_segment(0)
+            .expect("Unable to allocate segment");
         last_bucket_first_segment = segmenter
             .bucket(&segment, BUCKETS_PER_SEGMENT as u64 - 1)
             .expect("Unable to read last bucket.");
@@ -367,14 +384,20 @@ mod tests {
         let mut last_bucket_first_segment = segmenter
             .bucket(&segment, BUCKETS_PER_SEGMENT as u64 - 1)
             .expect("Unable to read last bucket.");
-        last_bucket_first_segment.put(123, 456, 0).expect("Unable to insert record into bucket.");
-        segmenter.write_bucket(&last_bucket_first_segment).expect("Saving bucket back to ");
+        last_bucket_first_segment
+            .put(123, 456, 0)
+            .expect("Unable to insert record into bucket.");
+        segmenter
+            .write_bucket(&last_bucket_first_segment)
+            .expect("Saving bucket back to ");
         let mut buckets = Vec::<Bucket>::with_capacity(BUCKETS_PER_SEGMENT);
         for bi in 0..BUCKETS_PER_SEGMENT {
             let b = segmenter.bucket(&segment, bi as u64).unwrap();
             buckets.push(b);
         }
-        segmenter.allocate_with_buckets(buckets, 0).expect("Unable to allocate segment");
+        segmenter
+            .allocate_with_buckets(buckets, 0)
+            .expect("Unable to allocate segment");
         last_bucket_first_segment = segmenter
             .bucket(&segment, BUCKETS_PER_SEGMENT as u64 - 1)
             .expect("Unable to read last bucket.");
@@ -390,7 +413,7 @@ mod tests {
             for i in 0..BUCKETS_PER_SEGMENT {
                 let mut bucket: Bucket = Default::default();
                 for y in 0..BUCKET_RECORDS {
-                    let k: u64 = (z * i * y) as u64;
+                    let k: u64 = ((z + 1) * (i + 1) * (y + 1)) as u64;
                     let v: u64 = k * 2;
                     bucket.put(k, v, 0).unwrap();
                 }
@@ -398,8 +421,32 @@ mod tests {
             }
             segmenter.allocate_with_buckets(buckets, 0).unwrap();
         }
-
-        // This test should check that we can retrieve all of the records we insert
-        todo!("Finish this test.");
+        let first_segment = segmenter.segment(0).unwrap();
+        for i in 0..BUCKETS_PER_SEGMENT {
+            let bucket = segmenter.bucket(&first_segment, i as u64).unwrap();
+            for y in 0..BUCKET_RECORDS {
+                match bucket.get(y as u64) {
+                    Some(r) => {
+                        panic!("We aren't supposed to have anything here!? Found: {}: {}", r.hash_key, r.value);
+                    },
+                    None => (),
+                }
+            }
+        }
+        for z in 1..10 {
+            let segment = segmenter.segment(z).unwrap();
+            for i in 0..BUCKETS_PER_SEGMENT {
+                let bucket = segmenter.bucket(&segment, i as u64).unwrap();
+                for y in 0..BUCKET_RECORDS {
+                    // Why the FUCK does this need to be different from the above
+                    // The compiler complains about multiplying usize by u64, but there's *no*
+                    // reason for z, i, or y to be anything *but* usize.
+                    let k: u64 = (z + 1) as u64 * (i + 1) as u64 * (y + 1) as u64;
+                    let expected_v = k * 2;
+                    let r = bucket.get(k).unwrap();
+                    assert_eq!(r.value, expected_v);
+                }
+            }
+        }
     }
 }

@@ -59,7 +59,7 @@ impl Serializable for Bucket {
     fn pack<W: Write + Seek>(&self, buffer: &mut W) -> Result<u64> {
         let offset = buffer.seek(io::SeekFrom::Current(0))?;
         buffer
-            .write(&self.buf)
+            .write_all(&self.buf)
             .context("Error packing bucket into buffer")?;
         Ok(offset)
     }
@@ -101,7 +101,8 @@ impl Bucket {
         debug!("Searching bucket for {}", hk);
         for record in self.iter() {
             debug!("Found hk: {}\tvalue: {}", record.hash_key, record.value);
-            if record.hash_key == hk {
+            // Records where both hash_key and values are set to 0 are considered empty
+            if record.hash_key == hk && (record.value != 0 || hk != 0) {
                 return Some(record);
             }
         }
@@ -159,8 +160,7 @@ impl Bucket {
         trace!("Record bytes: {:?}", &bytes);
         let offset = index * size_of::<Record>();
         trace!("Record offset: {}", offset);
-        let buf = &mut self.buf;
-        buf[offset..offset + size_of::<Record>()].copy_from_slice(&bytes);
+        self.buf[offset..offset + size_of::<Record>()].copy_from_slice(&bytes);
         Ok(index)
     }
 
@@ -171,6 +171,8 @@ impl Bucket {
         }
     }
 
+    /// Returns the bucket at index. This is not part of `Bucket`'s interface and is private, so it
+    /// may panic if you give it an index that is not valid. Index should be 0 <= i <= BUCKET_RECORDS
     fn at(&self, index: usize) -> Record {
         let offset = index * size_of::<Record>();
         let mut buf: [u8; 8] = [0; 8];
@@ -195,7 +197,7 @@ impl<'b> Iterator for BucketIter<'b> {
             return None;
         }
         self.index += 1;
-        Some(self.bucket.at(self.index - 1 as usize))
+        Some(self.bucket.at(self.index - 1))
     }
 }
 

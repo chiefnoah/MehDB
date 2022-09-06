@@ -17,6 +17,8 @@ use std::path::Path;
 use bitvec::prelude::*;
 use highway::{self, HighwayHash, HighwayHasher};
 
+use crate::serializer::{ByteKey, ByteValue};
+
 // My Extendible Hash Database
 pub struct MehDB {
     hasher_key: highway::Key,
@@ -51,15 +53,15 @@ impl MehDB {
     }
 
     fn bucket_for_key(&mut self, key: &[u64; 4]) -> Result<Bucket> {
-        let segment_offset = self
+        let segment_index = self
             .directory
             .segment_index(key[0])
             .with_context(|| format!("Unable to get segment offset for {:?}", key))?;
-        debug!("Segment index {}", segment_offset);
+        debug!("Segment index {}", segment_index);
         let segment = self
             .segmenter
-            .segment(segment_offset)
-            .with_context(|| format!("Unable to read segment at offset {}", segment_offset))?;
+            .segment(segment_index)
+            .with_context(|| format!("Unable to read segment at offset {}", segment_index))?;
         let bucket_index = (BUCKETS_PER_SEGMENT - 1) as u64 & key[3];
         debug!("Reading bucket at index: {}", bucket_index);
         self.segmenter.bucket(&segment, bucket_index)
@@ -73,15 +75,15 @@ impl MehDB {
         // TODO: support the full 256 bit keyspace for magical distributed system support
         let hash_key = hasher.hash256(&key.0);
         info!("hash_key: {:?}\tvalue: {}", hash_key, value.0);
-        let segment_offset = self
+        let segment_index = self
             .directory
             .segment_index(hash_key[0])
             .with_context(|| format!("Unable to get segment offset for {:?}", hash_key))?;
-        debug!("Segment index {}", segment_offset);
+        debug!("Segment index {}", segment_index);
         let segment = self
             .segmenter
-            .segment(segment_offset)
-            .with_context(|| format!("Unable to read segment at offset {}", segment_offset))?;
+            .segment(segment_index)
+            .with_context(|| format!("Unable to read segment with index {}", segment_index))?;
         let bucket_index = (BUCKETS_PER_SEGMENT - 1) as u64 & hash_key[3];
         debug!("Reading bucket at index: {}", bucket_index);
         let mut bucket = self
@@ -89,17 +91,13 @@ impl MehDB {
             .bucket(&segment, bucket_index)
             .with_context(|| format!("Reading bucket at index {}", bucket_index))?;
         debug!("Inserting record into bucket...");
-        let overflow = bucket.put(hash_key[0], value.0, segment.depth);
-        match overflow {
+        match bucket.put(hash_key[0], value.0, segment.depth) {
+            // Overflowed the bucket!
             Err(e) => {
                 info!("Bucket overflowed. Allocating new segment and splitting.");
                 let offset = segment.offset;
-                self.split_segment(segment, hash_key[0]).with_context(|| {
-                    format!(
-                        "Splitting segement at offset {}",
-                        offset
-                    )
-                })?;
+                self.split_segment(segment, hash_key[0])
+                    .with_context(|| format!("Splitting segement at offset {}", offset))?;
                 // TODO: don't be so inneficient. We already know the hash_key!
                 // Call put again, it may end up in a new bucket or in the same one that's now had
                 // some records migrated to a new segment.
@@ -159,10 +157,13 @@ impl MehDB {
         let mut new_buckets = Vec::<Bucket>::with_capacity(BUCKETS_PER_SEGMENT);
         let mask = (hk >> (64 - new_depth)) | 1;
         for bi in 0..BUCKETS_PER_SEGMENT {
-            let old_bucket = self.segmenter.bucket(&segment, bi as u64)?;
+            let old_bucket = self
+                .segmenter
+                .bucket(&segment, bi as u64)
+                .context("Reading old bucket for segment split")?;
             let mut new_bucket = Bucket::new();
             for record in old_bucket.iter() {
-                if (record.hash_key >> 64 - new_depth) & mask == mask {
+                if record.hash_key >> (64 - new_depth) == mask {
                     debug!(
                         "Insering record with hk {} into new bucket",
                         record.hash_key
@@ -172,8 +173,9 @@ impl MehDB {
                         .context("Inserting record in new bucket.")?;
                 }
             }
-            new_buckets.push(new_bucket);
+            new_buckets.insert(bi, new_bucket);
         }
+
         //TODO: refactor this to be more idiomatic
         warn!("Allocating new segment with depth {}", new_depth);
         let (new_segment_index, new_segment) =
@@ -194,9 +196,11 @@ impl MehDB {
             self.directory
                 .set_segment_index(start_dir_entry + i + step, new_segment_index)?;
         }
-        // Update the original 
+        // Update the original
         segment.depth += 1;
-        self.segmenter.update_segment(segment).context("Updating existing segment depth")?;
+        self.segmenter
+            .update_segment(segment)
+            .context("Updating existing segment depth")?;
         Ok(())
     }
 }
