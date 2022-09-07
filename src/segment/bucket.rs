@@ -81,7 +81,7 @@ impl Serializable for Bucket {
 }
 
 /// Gets the effective key
-fn normalize_key(hk: u64, local_depth: u64) -> u64 {
+fn normalize_key(hk: u64, local_depth: u8) -> u64 {
     assert!(local_depth <= 64);
     if local_depth == 0 {
         return 0;
@@ -109,7 +109,7 @@ impl Bucket {
         None
     }
 
-    fn maybe_index_to_insert(&self, hk: u64, value: u64, local_depth: u64) -> Option<usize> {
+    fn maybe_index_to_insert(&self, hk: u64, value: u64, local_depth: u8) -> Option<usize> {
         let local_mask = normalize_key(hk, local_depth);
         for (i, record) in self.iter().enumerate() {
             trace!(
@@ -137,7 +137,7 @@ impl Bucket {
     /// successful, otherwise an error indicating an overflow. In the event of an overflow, it is
     /// the responsibility of the Segmenter to split and allocate annother segment so the new
     /// record can be inserted.
-    pub fn put(&mut self, hk: u64, value: u64, local_depth: u64) -> Result<usize, BucketFullError> {
+    pub fn put(&mut self, hk: u64, value: u64, local_depth: u8) -> Result<usize, BucketFullError> {
         debug!(
             "Inserting hk: {}\tvalue: {}\t local depth: {}",
             hk, value, local_depth
@@ -205,7 +205,7 @@ impl<'b> Iterator for BucketIter<'b> {
 pub struct BucketFullError {
     offset: u64,
     hash_key: u64,
-    local_depth: u64,
+    local_depth: u8,
 }
 
 impl fmt::Display for BucketFullError {

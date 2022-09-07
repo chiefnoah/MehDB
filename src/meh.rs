@@ -63,7 +63,7 @@ impl MehDB {
             .segmenter
             .segment(segment_index)
             .with_context(|| format!("Unable to read segment at offset {}", segment_index))?;
-        let bucket_index = (BUCKETS_PER_SEGMENT - 1) as u64 & key[3];
+        let bucket_index = ((BUCKETS_PER_SEGMENT - 1) as u64 & key[3]) as u32;
         debug!("Reading bucket at index: {}", bucket_index);
         self.segmenter.bucket(&segment, bucket_index)
     }
@@ -85,7 +85,7 @@ impl MehDB {
             .segmenter
             .segment(segment_index)
             .with_context(|| format!("Unable to read segment with index {}", segment_index))?;
-        let bucket_index = (BUCKETS_PER_SEGMENT - 1) as u64 & hash_key[3];
+        let bucket_index = ((BUCKETS_PER_SEGMENT - 1) as u64 & hash_key[3]) as u32;
         debug!("Reading bucket at index: {}", bucket_index);
         let mut bucket = self
             .segmenter
@@ -137,7 +137,7 @@ impl MehDB {
         let mut segment = segment;
         let mut global_depth = self.directory.global_depth()?;
         // If we need to expand the directory size
-        if segment.depth == global_depth as u64 {
+        if segment.depth == global_depth {
             match self.directory.grow() {
                 Ok(i) => {
                     // Re-read the global_depth post-grow call. For most implementations, it should be
@@ -160,7 +160,7 @@ impl MehDB {
         for bi in 0..BUCKETS_PER_SEGMENT {
             let old_bucket = self
                 .segmenter
-                .bucket(&segment, bi as u64)
+                .bucket(&segment, bi as u32)
                 .context("Reading old bucket for segment split")?;
             let mut new_bucket = Bucket::new();
             for record in old_bucket.iter() {
@@ -185,13 +185,13 @@ impl MehDB {
                 Err(e) => return Err(e.context("Allocating new segment with populated buckets.")),
             };
         let s = hk >> 64 - global_depth;
-        let step = 1 << (global_depth as u64 - new_depth);
+        let step = 1 << (global_depth - new_depth);
         let mut start_dir_entry = if segment.depth == 0 {
             0
         } else {
             hk >> 64 - segment.depth
         };
-        start_dir_entry = start_dir_entry << (global_depth as u64 - segment.depth);
+        start_dir_entry = start_dir_entry << (global_depth - segment.depth);
         start_dir_entry = start_dir_entry - (start_dir_entry % 2);
         for i in 0..step {
             self.directory

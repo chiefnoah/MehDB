@@ -1,44 +1,45 @@
+use anyhow::{anyhow, Context, Result};
 use log::{info, warn};
-use parking_lot::RwLock;
-use std::io;
-use std::fs::{File, OpenOptions};
 use memmap::{Mmap, MmapMut};
+use parking_lot::RwLock;
+use std::fs::{File, OpenOptions};
+use std::io;
+use std::path::Path;
 
-
-pub trait Directory {
+pub trait Directory<T: Sized = Self> {
     type Config;
     fn init(config: Self::Config) -> Self;
-    fn segment_index(&self, i: u64) -> io::Result<u64>;
-    fn set_segment_index(&self, i: u64, index: u64) -> io::Result<()>;
-    fn grow(&mut self) -> io::Result<u64>;
-    fn global_depth(&mut self) -> io::Result<u32>;
+    fn segment_index(&self, i: u64) -> Result<u32>;
+    fn set_segment_index(&self, i: u64, index: u32) -> Result<()>;
+    /// Doubles the size of the directory and returns the new size (not the global_depth)
+    fn grow(&self) -> Result<u32>;
+    fn global_depth(&self) -> Result<u8>;
 }
 
 pub struct MemoryDirectory {
     // dir contains the directory and the global depth in a tuple
-    dir: RwLock<(Vec<u64>, u32)>,
+    dir: RwLock<(Vec<u32>, u8)>,
 }
 
-
 impl Directory for MemoryDirectory {
-    type Config = u64;
+    type Config = u32;
 
     fn init(initial_index: Self::Config) -> Self {
         info!("Initializing new MemoryDirectory");
-        let mut dir: Vec<u64> = Vec::with_capacity(1);
+        let mut dir: Vec<u32> = Vec::with_capacity(1);
         dir.push(initial_index);
         MemoryDirectory {
             dir: RwLock::new((dir, 0)),
         }
     }
 
-    fn segment_index(&self, i: u64) -> io::Result<u64> {
+    fn segment_index(&self, i: u64) -> Result<u32> {
         let unlocked = self.dir.read();
-        let dir: &Vec<u64> = &unlocked.0;
+        let dir: &Vec<u32> = &unlocked.0;
         let global_depth = unlocked.1;
         let index = if global_depth == 0 {
             // Lazy way to get out of overflowing bitshift
-            0 
+            0
         } else {
             i >> 64 - global_depth
         };
@@ -46,19 +47,16 @@ impl Directory for MemoryDirectory {
         let r = dir.get(index as usize);
         match r {
             Some(r) => Ok(*r),
-            None => Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "Segment index out of bounds.",
-            )),
+            None => Err(anyhow!("Segment index out of bounds: {}", i)),
         }
     }
-    fn set_segment_index(&self, i: u64, index: u64) -> io::Result<()> {
+    fn set_segment_index(&self, i: u64, index: u32) -> Result<()> {
         let mut dir = self.dir.write();
         dir.0[i as usize] = index;
         Ok(())
     }
 
-    fn grow(&mut self) -> io::Result<u64> {
+    fn grow(&self) -> Result<u32> {
         let mut dir = self.dir.write();
         let len = dir.0.len();
         warn!("Growing directory. New size: {}", len * 2);
@@ -71,23 +69,73 @@ impl Directory for MemoryDirectory {
             dir.0[(i * 2) + 1] = *r;
         }
         (*dir).1 += 1;
-        Ok(len as u64 * 2)
+        Ok(len as u32 * 2)
     }
 
-    fn global_depth(&mut self) -> io::Result<u32> {
+    fn global_depth(&self) -> Result<u8> {
         // Get a read-only handle on the directory
         let dir = self.dir.read();
         Ok(dir.1)
     }
-
 }
 
 pub struct MMapDirectory {
-    map: Mmap,
+    // We do not actually use the mutable nature of RwLock, just
+    // as a guard to turn Mmap into a MmapMut
+    map: RwLock<Mmap>,
 }
 
-impl MemoryDirectory {
-    pub fn init(path: Option<Path>) -> Self {
+pub struct MMapDirectoryConfig {
+    path: Box<Path>,
+}
 
+impl Directory for MMapDirectory {
+    type Config = MMapDirectoryConfig;
+    fn init(config: Self::Config) -> Self {
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .truncate(false) // Don't clear the file, we need it!
+            .create(true)
+            .open(&config.path)
+            .context("Opening up mmap file")
+            .expect("Unable to initialize mmap file.");
+        // mmaps are unsafe!
+        let mut map = unsafe { Mmap::map(&file).expect("Unable to initialize mmap") };
+        // If the mmap is empty or new, make it writeable, populate the global_
+        if map.len() < 1 {
+            let mut mut_map = map.make_mut().expect("Unable to initialze writable mmap");
+            // Global depth is 0
+            mut_map[0] = 0;
+            // The 1 entry is segment index 0
+            mut_map[1] = 0;
+            map = mut_map.make_read_only().unwrap();
+        }
+        Self {
+            map: RwLock::new(map),
+        }
+    }
+
+    fn segment_index(&self, i: u64) -> Result<u32> {
+        let unlocked = self.map.read();
+        let offset = (i * 4) as usize;
+        match unlocked.get(offset..offset + 4) {
+            Some(i) => {
+                Ok(u32::from_be_bytes(i.try_into()?))
+            },
+            None => Err(anyhow!("Unable to find segment index in directory at location {}", i))
+        }
+    }
+
+    fn set_segment_index(&self, i: u64, index: u32) -> Result<()> {
+        todo!("Implement this");
+    }
+
+    fn grow(&self) -> Result<u32> {
+        todo!("Implement this");
+    }
+
+    fn global_depth(&self) -> Result<u8> {
+        todo!("Implement this");
     }
 }
