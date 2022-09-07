@@ -82,7 +82,7 @@ impl Directory for MemoryDirectory {
 pub struct MMapDirectory {
     // We do not actually use the mutable nature of RwLock, just
     // as a guard to turn Mmap into a MmapMut
-    map: RwLock<Mmap>,
+    map: RwLock<MmapMut>,
 }
 
 pub struct MMapDirectoryConfig {
@@ -101,15 +101,13 @@ impl Directory for MMapDirectory {
             .context("Opening up mmap file")
             .expect("Unable to initialize mmap file.");
         // mmaps are unsafe!
-        let mut map = unsafe { Mmap::map(&file).expect("Unable to initialize mmap") };
+        let mut map = unsafe { MmapMut::map_mut(&file).expect("Unable to initialize mmap") };
         // If the mmap is empty or new, make it writeable, populate the global_
         if map.len() < 1 {
-            let mut mut_map = map.make_mut().expect("Unable to initialze writable mmap");
             // Global depth is 0
-            mut_map[0] = 0;
+            map[0] = 0;
             // The 1 entry is segment index 0
-            mut_map[1] = 0;
-            map = mut_map.make_read_only().unwrap();
+            map[1..5].copy_from_slice(&[0; 4][..]);
         }
         Self {
             map: RwLock::new(map),
@@ -118,7 +116,7 @@ impl Directory for MMapDirectory {
 
     fn segment_index(&self, i: u64) -> Result<u32> {
         let unlocked = self.map.read();
-        let offset = (i * 4) as usize;
+        let offset = ((i * 4) + 1) as usize;
         match unlocked.get(offset..offset + 4) {
             Some(i) => {
                 Ok(u32::from_be_bytes(i.try_into()?))
@@ -128,11 +126,16 @@ impl Directory for MMapDirectory {
     }
 
     fn set_segment_index(&self, i: u64, index: u32) -> Result<()> {
-        todo!("Implement this");
+        let mut unlocked = self.map.write();
+        // We have a RW lock now
+        let offset = ((i * 4) + 1) as usize;
+        unlocked[offset..offset + 4].copy_from_slice(&index.to_le_bytes()[..]);
+        Ok(())
     }
 
     fn grow(&self) -> Result<u32> {
-        todo!("Implement this");
+        let mut unlocked = self.map.upgradable_read();
+        todo!("Finish implementing this");
     }
 
     fn global_depth(&self) -> Result<u8> {
