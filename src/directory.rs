@@ -5,6 +5,7 @@ use parking_lot::RwLock;
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::path::Path;
+use tempfile::tempfile;
 
 pub trait Directory<T: Sized = Self> {
     type Config;
@@ -83,6 +84,7 @@ pub struct MMapDirectory {
     // We do not actually use the mutable nature of RwLock, just
     // as a guard to turn Mmap into a MmapMut
     map: RwLock<MmapMut>,
+    config: MMapDirectoryConfig,
 }
 
 pub struct MMapDirectoryConfig {
@@ -111,6 +113,7 @@ impl Directory for MMapDirectory {
         }
         Self {
             map: RwLock::new(map),
+            config,
         }
     }
 
@@ -135,6 +138,8 @@ impl Directory for MMapDirectory {
 
     fn grow(&self) -> Result<u32> {
         let mut unlocked = self.map.upgradable_read();
+        let temporary_file = tempfile()?;
+        // Iterate over the existing file, write each record *twice* right after each other
         todo!("Finish implementing this");
     }
 
