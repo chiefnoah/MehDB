@@ -15,4 +15,5 @@ Cargo.lock
 *.pdb
 index.*
 segments.bin
+directory.bin
 .env

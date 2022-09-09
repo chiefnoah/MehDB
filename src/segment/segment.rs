@@ -1,7 +1,7 @@
 use crate::segment::bucket::{Bucket, BUCKET_SIZE};
 use crate::serializer::{DataOrOffset, Serializable};
 use anyhow::{Context, Result};
-use log::{debug, info, warn};
+use log::{debug, info, warn, trace};
 use simple_error::SimpleError;
 use std::collections::HashMap;
 use std::fs::File;
@@ -224,7 +224,7 @@ where
             .write_all(&buf)
             .context("Writing new segment's depth.")?;
         for (i, bucket) in buckets.iter().enumerate() {
-            info!("Writing bucket with index {}", i);
+            debug!("Writing bucket with index {}", i);
             bucket
                 .pack(&mut buffer)
                 .with_context(|| format!("Writing bucket with index {}", i))?;
@@ -241,7 +241,7 @@ where
             .buffer
             .seek(io::SeekFrom::End(0))
             .context("Seeking to end of buffer")?;
-        warn!("End of buffer: {}", end_of_buffer);
+        trace!("End of buffer: {}", end_of_buffer);
         Ok((index, Segment { offset, depth }))
     }
 
@@ -252,7 +252,7 @@ where
         self.buffer
             .seek(io::SeekFrom::Start(offset))
             .context("Seeking to bucket's offset")?;
-        info!("Reading bucket at offset {}", offset);
+        debug!("Reading bucket at offset {}", offset);
         return Bucket::unpack(&mut self.buffer);
     }
 
@@ -270,7 +270,7 @@ where
     }
 
     fn update_segment(&mut self, segment: Segment) -> Result<()> {
-        warn!("Updating segment depth to {}", segment.depth);
+        debug!("Updating segment depth to {}", segment.depth);
         self.buffer.seek(io::SeekFrom::Start(segment.offset))?;
         self.buffer.write_all(&segment.depth.to_le_bytes())?;
         self.buffer.flush()?;

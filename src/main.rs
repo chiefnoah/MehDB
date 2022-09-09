@@ -29,6 +29,11 @@ fn main() -> Result<()>{
         db.put(key, value)
             .context("Error inserting record")
             .expect("Unable to insert record!");
+        let testkey = ByteKey((0 as u64).to_le_bytes().to_vec());
+        db.get(testkey).with_context(|| {
+            format!("Key 0 missing at i {}", i)
+        }).unwrap();
+
     }
     let end_time = start_time.elapsed().as_secs_f64();
     println!("Elapsed time: {:.2?}\nAvg inserts/us: {:.2}", end_time, RECORDS as f64 / end_time);

@@ -1,4 +1,4 @@
-use crate::directory::{Directory, MemoryDirectory};
+use crate::directory::{Directory, MMapDirectory, MMapDirectoryConfig};
 use crate::segment::file_segmenter::file_segmenter;
 use crate::segment::{
     self, BasicSegmenter, Bucket, Record, Segment, Segmenter, BUCKETS_PER_SEGMENT,
@@ -6,7 +6,6 @@ use crate::segment::{
 use crate::serializer::{self, DataOrOffset, Serializable, SimpleFileTransactor, Transactor};
 use anyhow::{anyhow, Context, Result};
 use log::{debug, error, info, warn};
-use serde::{Deserialize, Serialize};
 use std::default::Default;
 use std::fs::File;
 use std::hash::Hasher;
@@ -22,7 +21,7 @@ use crate::serializer::{ByteKey, ByteValue};
 // My Extendible Hash Database
 pub struct MehDB {
     hasher_key: highway::Key,
-    directory: MemoryDirectory,
+    directory: MMapDirectory,
     segmenter: BasicSegmenter<File>,
     //transactor: SimpleFileTransactor,
 }
@@ -39,15 +38,19 @@ impl MehDB {
             None => Path::new("."),
         };
         let segment_file_path = path.join("segments.bin");
+        let directory_file_path = path.join("directory.bin");
         let segmenter = file_segmenter(Some(&segment_file_path)).with_context(|| {
             format!(
                 "Unable to initialize file_segmenter at path {}",
                 segment_file_path.into_os_string().into_string().unwrap()
             )
         })?;
+        let mmap_dir_config = MMapDirectoryConfig{
+            path: directory_file_path
+        };
         let mehdb = MehDB {
             hasher_key: highway::Key([53252, 2352323, 563956259, 234832]), // TODO: change this
-            directory: MemoryDirectory::init(0),
+            directory: MMapDirectory::init(mmap_dir_config).context("Creating mmap dir.")?,
             segmenter,
         };
         Ok(mehdb)
@@ -102,7 +105,7 @@ impl MehDB {
                 // TODO: don't be so inneficient. We already know the hash_key!
                 // Call put again, it may end up in a new bucket or in the same one that's now had
                 // some records migrated to a new segment.
-                warn!("Re-inserting record.");
+                debug!("Re-inserting record.");
                 return self.put(key, value);
             }
             _ => {
@@ -135,7 +138,7 @@ impl MehDB {
     fn split_segment(&mut self, segment: Segment, hk: u64) -> Result<()> {
         info!("Splitting segment");
         let mut segment = segment;
-        let mut global_depth = self.directory.global_depth()?;
+        let mut global_depth = self.directory.global_depth().context("Reading current global depth")?;
         // If we need to expand the directory size
         if segment.depth == global_depth {
             match self.directory.grow() {
@@ -153,6 +156,7 @@ impl MehDB {
                 }
             };
         }
+        info!("gobal_depth: {}", global_depth);
         let new_depth = segment.depth + 1;
         // The buckets that are being allocated to the new segment
         let mut new_buckets = Vec::<Bucket>::with_capacity(BUCKETS_PER_SEGMENT);
@@ -178,7 +182,7 @@ impl MehDB {
         }
 
         //TODO: refactor this to be more idiomatic
-        warn!("Allocating new segment with depth {}", new_depth);
+        info!("Allocating new segment with depth {}", new_depth);
         let (new_segment_index, new_segment) =
             match self.segmenter.allocate_with_buckets(new_buckets, new_depth) {
                 Ok(s) => s,
