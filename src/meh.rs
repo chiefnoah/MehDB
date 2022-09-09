@@ -9,7 +9,7 @@ use log::{debug, error, info, warn};
 use std::default::Default;
 use std::fs::File;
 use std::hash::Hasher;
-use std::io::{self, Read, Seek, Write};
+use std::io::{self, Read, Seek, Write, Cursor};
 use std::mem::size_of;
 use std::path::Path;
 
@@ -26,7 +26,6 @@ pub struct MehDB {
     //transactor: SimpleFileTransactor,
 }
 
-const HEADER_SIZE: u64 = 16;
 
 /// A Extendible hashing implementation that does not support multithreading.
 impl MehDB {
@@ -71,14 +70,15 @@ impl MehDB {
         self.segmenter.bucket(&segment, bucket_index)
     }
 
-    pub fn put(&mut self, key: serializer::ByteKey, value: serializer::ByteValue) -> Result<()> {
+    pub fn put(&mut self, key: &[u8], value: u64) -> Result<()> {
         let hasher = HighwayHasher::new(self.hasher_key);
         // We only need the first u64 of the returned value because
         // It's unlikely we have the hard drive space to support a u64 deep directory
         // and we *definitely* don't have the RAM to.
         // TODO: support the full 256 bit keyspace for magical distributed system support
-        let hash_key = hasher.hash256(&key.0);
-        info!("hash_key: {:?}\tvalue: {}", hash_key, value.0);
+        // Also we need to store the whole 256b digest on disk/in the buckets to prevent collisions
+        let hash_key = hasher.hash256(&key);
+        info!("hash_key: {:?}\tvalue: {}", hash_key, value);
         let segment_index = self
             .directory
             .segment_index(hash_key[0])
@@ -95,7 +95,7 @@ impl MehDB {
             .bucket(&segment, bucket_index)
             .with_context(|| format!("Reading bucket at index {}", bucket_index))?;
         debug!("Inserting record into bucket...");
-        match bucket.put(hash_key[0], value.0, segment.depth) {
+        match bucket.put(hash_key[0], value, segment.depth) {
             // Overflowed the bucket!
             Err(e) => {
                 info!("Bucket overflowed. Allocating new segment and splitting.");
