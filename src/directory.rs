@@ -156,7 +156,9 @@ impl Directory for MMapDirectory {
         let unlocked = self.map.upgradable_read();
         // Create a temporary file, we'll fill this with the contents of the current map, but
         // duplicated per the rules of a MSP extendible hashing directory
-        let mut temporary_file = NamedTempFile::new()?;
+        let mut dir_path = self.config.path.clone();
+        dir_path.pop();
+        let mut temporary_file = NamedTempFile::new_in(dir_path)?;
         let f = temporary_file.as_file_mut();
         let global_depth = unlocked[0];
         info!(
