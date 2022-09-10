@@ -1,7 +1,7 @@
-use crate::segment::bucket::{Bucket, BUCKET_SIZE};
+use crate::segment::bucket::{self, Bucket, BUCKET_SIZE};
 use crate::serializer::{DataOrOffset, Serializable};
 use anyhow::{Context, Result};
-use log::{debug, info, warn, trace};
+use log::{debug, info, trace, warn};
 use simple_error::SimpleError;
 use std::collections::HashMap;
 use std::fs::File;
@@ -53,33 +53,33 @@ pub trait Segmenter {
     /// storing `num_segments`. Implementations can expose a way to read the header in their API,
     /// but it is not strictly necessary.
     type Header;
+    type Record;
     /// Attempts to read an existing segment.
-    fn segment(&mut self, index: u32) -> Result<Segment>;
+    fn segment(&self, index: u32) -> Result<Segment>;
     /// Creates a new segment and returns a tuple containing the index of the newly created segment
     /// and an instance of `Segment`. This increments `num_segments` by one. If the implementation
     /// stores on disk, it should write the new segment then increment the persisted `num_segments`
     /// after, effectively "committing" the change.
-    fn allocate_segment(&mut self, depth: u8) -> Result<(u32, Segment)>;
+    fn allocate_segment(&self, depth: u8) -> Result<(u32, Segment)>;
     /// The same as `Segmenter.allocate_segment` except instead of empty buckets it writes the
     /// provided buckets.
-    fn allocate_with_buckets(&mut self, buckets: Vec<Bucket>, depth: u8)
-        -> Result<(u32, Segment)>;
+    fn allocate_with_buckets(&self, buckets: Vec<Bucket>, depth: u8) -> Result<(u32, Segment)>;
     /// Retrieves a bucket from segment at bucket index. The resulting bucket can be modified and synced
     /// back to to the Segmenter using `write_bucket`. Implementations that support concurrency are
     /// responsible for providing the appropriate locking mechanism to prevent race-conditions.
-    fn bucket(&mut self, segment: &Segment, index: u32) -> Result<Bucket>;
+    fn bucket(&self, segment: &Segment, index: u32) -> Result<Bucket>;
     /// Overwrites an existing bucket.
-    fn write_bucket(&mut self, bucket: &Bucket) -> Result<()>;
+    fn write_bucket(&self, bucket: &Bucket) -> Result<()>;
     /// Returns the *current* number of segements allocated. This may or may not be cached
     /// in-memory. Implementations that save segements to non-volatile storage *should* store this
     /// value along with the segments. If the implementation supports concurrency, this should
     /// only be used in a context where a read of this value is guaranteed to be correct for the
     /// duration of it's use. That is, if you support concurrent segement creation, this method
     /// should only be called inside a syncronized block.
-    fn num_segments(&mut self) -> Result<u32>;
+    fn num_segments(&self) -> Result<u32>;
     /// Updates the local_depth of `Segment`. Implementations that allow for concurrent access
     /// should take care to prevent race conditions.
-    fn update_segment(&mut self, segment: Segment) -> Result<()>;
+    fn update_segment(&self, segment: Segment) -> Result<()>;
 }
 
 impl Serializable for u32 {
@@ -155,7 +155,8 @@ where
 {
     // For this implementation, the header is simply the u32 num_segments
     type Header = u32;
-    fn segment(&mut self, index: u32) -> Result<Segment> {
+    type Record = bucket::Record;
+    fn segment(&self, index: u32) -> Result<Segment> {
         let offset = ((index as usize * SEGMENT_SIZE) + size_of::<Self::Header>()) as u64;
         if let Some(cached_depth) = self.segment_depth_cache.get(&index) {
             return Ok(Segment {
@@ -176,7 +177,7 @@ where
         Ok(Segment { depth, offset })
     }
 
-    fn allocate_segment(&mut self, depth: u8) -> Result<(u32, Segment)> {
+    fn allocate_segment(&self, depth: u8) -> Result<(u32, Segment)> {
         debug!("Allocating empty segment with depth {}", depth);
         // Seek to the proper offset
         let index = self.num_segments;
@@ -200,11 +201,7 @@ where
         Ok((index, Segment { depth, offset }))
     }
 
-    fn allocate_with_buckets(
-        &mut self,
-        buckets: Vec<Bucket>,
-        depth: u8,
-    ) -> Result<(u32, Segment)> {
+    fn allocate_with_buckets(&self, buckets: Vec<Bucket>, depth: u8) -> Result<(u32, Segment)> {
         // The number of buckets passed in *must* be the entire segment's buckets
         assert!(buckets.len() == BUCKETS_PER_SEGMENT);
 
@@ -245,7 +242,7 @@ where
         Ok((index, Segment { offset, depth }))
     }
 
-    fn bucket(&mut self, segment: &Segment, index: u32) -> Result<Bucket> {
+    fn bucket(&self, segment: &Segment, index: u32) -> Result<Bucket> {
         assert!(index < BUCKETS_PER_SEGMENT as u32);
         //----------------------------------------------------------👇 for segment_depth
         let offset = segment.offset + (index as usize * BUCKET_SIZE) as u64 + 1;
@@ -256,7 +253,7 @@ where
         return Bucket::unpack(&mut self.buffer);
     }
 
-    fn write_bucket(&mut self, bucket: &Bucket) -> Result<()> {
+    fn write_bucket(&self, bucket: &Bucket) -> Result<()> {
         self.buffer
             .seek(io::SeekFrom::Start(bucket.offset))
             .context("Seeking to bucket's offset")?;
@@ -265,19 +262,18 @@ where
         Ok(())
     }
 
-    fn num_segments(&mut self) -> Result<u32> {
+    fn num_segments(&self) -> Result<u32> {
         Ok(self.num_segments)
     }
 
-    fn update_segment(&mut self, segment: Segment) -> Result<()> {
+    fn update_segment(&self, segment: Segment) -> Result<()> {
         debug!("Updating segment depth to {}", segment.depth);
         self.buffer.seek(io::SeekFrom::Start(segment.offset))?;
         self.buffer.write_all(&segment.depth.to_le_bytes())?;
         self.buffer.flush()?;
         let index = Self::segment_offset_to_index(&segment);
         if self.segment_depth_cache.contains_key(&index) {
-            self.segment_depth_cache
-                .insert(index, segment.depth);
+            self.segment_depth_cache.insert(index, segment.depth);
         }
         Ok(())
     }

@@ -8,6 +8,7 @@ pub mod directory;
 pub mod meh;
 pub mod segment;
 pub mod serializer;
+pub mod locking;
 
 use crate::meh::MehDB;
 use crate::serializer::{ByteKey, ByteValue};

@@ -45,8 +45,8 @@ impl MehDB {
                 segment_file_path.into_os_string().into_string().unwrap()
             )
         })?;
-        let mmap_dir_config = MMapDirectoryConfig{
-            path: directory_file_path
+        let mmap_dir_config = MMapDirectoryConfig {
+            path: directory_file_path,
         };
         let mehdb = MehDB {
             hasher_key: highway::Key([53252, 2352323, 563956259, 234832]), // TODO: change this
@@ -138,7 +138,10 @@ impl MehDB {
     fn split_segment(&mut self, segment: Segment, hk: u64) -> Result<()> {
         info!("Splitting segment");
         let mut segment = segment;
-        let mut global_depth = self.directory.global_depth().context("Reading current global depth")?;
+        let mut global_depth = self
+            .directory
+            .global_depth()
+            .context("Reading current global depth")?;
         // If we need to expand the directory size
         if segment.depth == global_depth {
             match self.directory.grow() {
