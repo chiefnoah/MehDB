@@ -1,4 +1,4 @@
-use crate::locking::StripedRWLock;
+use crate::locking::{RWFilePool, StripedRWLock};
 use crate::segment::bucket::{self, Bucket};
 use crate::segment::{Segment, Segmenter, BUCKETS_PER_SEGMENT, SEGMENT_SIZE};
 use crate::serializer::{DataOrOffset, Serializable};
@@ -7,19 +7,23 @@ use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::mem::size_of;
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::AtomicU32;
 
-struct ThreadSafeSegmenter<T: Read + Write + Seek> {
+
+struct ThreadSafeSegmenter {
     // TODO: add a LRU cache for segment depth
-    file_handles: Arc<StripedRWLock<()>>,
-    num_segments: Mutex<u32>,
+    file_handles: Arc<RWFilePool>,
+    num_segments: AtomicU32,
 }
 
-impl<T: Read + Write + Seek> Segmenter for ThreadSafeSegmenter<T> {
+impl Segmenter for ThreadSafeSegmenter {
     type Header = u8;
     type Record = bucket::Record;
 
     fn segment(&self, index: u32) -> Result<Segment> {
-        let buffer = self.file_handles.get(&index.to_le_bytes()[..]).read();
+        let k = &index.to_le_bytes()[..];
+        // Get a file-handle
+        let mut buffer = self.file_handles.ro_file(index);
         let offset = ((index as usize * SEGMENT_SIZE) + size_of::<Self::Header>()) as u64;
         buffer
             .seek(SeekFrom::Start(offset))
@@ -36,8 +40,6 @@ impl<T: Read + Write + Seek> Segmenter for ThreadSafeSegmenter<T> {
     }
 
     fn allocate_segment(&self, depth: u8) -> Result<(u32, Segment)> {
-        // Get a handle on the num_segments ex. This should prevent all other allocations
-        let num_segments = self.num_segments.lock();
         
         todo!()
     }

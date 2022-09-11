@@ -10,6 +10,7 @@ use std::iter::Iterator;
 use std::mem::size_of;
 use std::ops::{Index, IndexMut};
 use std::path::Path;
+use std::cell::RefCell;
 
 // The number of buckets in each segment.
 // This may be adapted to be parametrizable on a per-database level
@@ -96,11 +97,11 @@ impl Serializable for u32 {
 }
 
 pub struct BasicSegmenter<B: Read + Write + Seek> {
-    buffer: B,
+    buffer: RefCell<B>,
     num_segments: u32,
     header_dirty: bool,
     // Maps segment index to depth
-    segment_depth_cache: HashMap<u32, u8>,
+    //segment_depth_cache: HashMap<u32, u8>,
     iter_index: usize,
 }
 
@@ -118,11 +119,11 @@ impl<B: Read + Write + Seek> BasicSegmenter<B> {
                 0
             }
         };
-        let mut out = Self {
+        let out = Self {
             num_segments,
-            buffer,
+            buffer: RefCell::new(buffer),
             header_dirty: false,
-            segment_depth_cache: HashMap::new(),
+            //segment_depth_cache: HashMap::new(),
             iter_index: 0,
         };
         if first_time {
@@ -133,13 +134,14 @@ impl<B: Read + Write + Seek> BasicSegmenter<B> {
     }
 
     fn write_num_segments(&mut self) -> Result<()> {
-        self.buffer
+        let mut buffer = self.buffer.borrow_mut();
+        buffer
             .seek(io::SeekFrom::Start(0))
             .context("Seeking to beginning of segment file.")?;
-        self.buffer
+        buffer
             .write_all(&self.num_segments.to_le_bytes())
             .context("Syncing num_segments")?;
-        self.buffer.flush()?;
+        buffer.flush()?;
         Ok(())
     }
 
@@ -157,42 +159,44 @@ where
     type Header = u32;
     type Record = bucket::Record;
     fn segment(&self, index: u32) -> Result<Segment> {
+        let mut buffer = self.buffer.borrow_mut();
         let offset = ((index as usize * SEGMENT_SIZE) + size_of::<Self::Header>()) as u64;
-        if let Some(cached_depth) = self.segment_depth_cache.get(&index) {
-            return Ok(Segment {
-                depth: *cached_depth,
-                offset,
-            });
-        }
-        self.buffer.seek(io::SeekFrom::Start(offset))?;
+        //if let Some(cached_depth) = self.segment_depth_cache.get(&index) {
+        //    return Ok(Segment {
+        //        depth: *cached_depth,
+        //        offset,
+        //    });
+        //}
+        buffer.seek(io::SeekFrom::Start(offset))?;
         let mut buf: [u8; 1] = [0; 1];
-        self.buffer.read_exact(&mut buf).with_context(|| {
+        buffer.read_exact(&mut buf).with_context(|| {
             format!(
                 "Error reading segment local depth for segment index {}/{} with offset {}",
                 index, self.num_segments, offset
             )
         })?;
         let depth = u8::from_le_bytes(buf);
-        self.segment_depth_cache.insert(index, depth);
+        //self.segment_depth_cache.insert(index, depth);
         Ok(Segment { depth, offset })
     }
 
     fn allocate_segment(&self, depth: u8) -> Result<(u32, Segment)> {
         debug!("Allocating empty segment with depth {}", depth);
+        let buffer = self.buffer.borrow_mut();
         // Seek to the proper offset
         let index = self.num_segments;
         //------------------------------------------👇 for num_segments header in segments file
         let offset = ((index as usize * SEGMENT_SIZE) + size_of::<Self::Header>()) as u64;
         debug!("New segment offset: {}", offset);
-        self.buffer
+        buffer
             .seek(io::SeekFrom::Start(offset))
             .with_context(|| format!("Seeking to new segment's offset {}", offset))?;
         let mut buf: [u8; SEGMENT_SIZE] = [0; SEGMENT_SIZE];
         buf[..1].copy_from_slice(&depth.to_le_bytes());
-        self.buffer
+        buffer
             .write_all(&buf)
             .context("Writing new segment bytes")?;
-        self.buffer
+        buffer
             .flush()
             .context("Flushing buffer after segment allocate.")?;
         self.num_segments += 1;
@@ -202,6 +206,7 @@ where
     }
 
     fn allocate_with_buckets(&self, buckets: Vec<Bucket>, depth: u8) -> Result<(u32, Segment)> {
+        let mut buffer = self.buffer.borrow_mut();
         // The number of buckets passed in *must* be the entire segment's buckets
         assert!(buckets.len() == BUCKETS_PER_SEGMENT);
 
@@ -211,19 +216,19 @@ where
         info!("New segment offset: {}", offset);
         // We create a BufWriter because we're going to be writing a lot and don't want to flush it
         // until we're done.
-        let mut buffer = BufWriter::with_capacity(SEGMENT_SIZE as usize, &mut self.buffer);
-        buffer
+        let mut buffer_w = BufWriter::with_capacity(SEGMENT_SIZE as usize, &mut *buffer);
+        buffer_w
             .seek(io::SeekFrom::Start(offset))
             .context("Seeking to new segment location")?;
         let mut buf: [u8; 1] = [0; 1];
         buf[..].copy_from_slice(&depth.to_le_bytes());
-        buffer
+        buffer_w
             .write_all(&buf)
             .context("Writing new segment's depth.")?;
         for (i, bucket) in buckets.iter().enumerate() {
             debug!("Writing bucket with index {}", i);
             bucket
-                .pack(&mut buffer)
+                .pack(&mut *buffer)
                 .with_context(|| format!("Writing bucket with index {}", i))?;
         }
         buffer
@@ -236,6 +241,7 @@ where
             .context("Syncronizing num_segments after allocating.")?;
         let end_of_buffer = self
             .buffer
+            .borrow_mut()
             .seek(io::SeekFrom::End(0))
             .context("Seeking to end of buffer")?;
         trace!("End of buffer: {}", end_of_buffer);
@@ -243,22 +249,24 @@ where
     }
 
     fn bucket(&self, segment: &Segment, index: u32) -> Result<Bucket> {
+        let mut buffer = self.buffer.borrow_mut();
         assert!(index < BUCKETS_PER_SEGMENT as u32);
         //----------------------------------------------------------👇 for segment_depth
         let offset = segment.offset + (index as usize * BUCKET_SIZE) as u64 + 1;
-        self.buffer
+        buffer
             .seek(io::SeekFrom::Start(offset))
             .context("Seeking to bucket's offset")?;
         debug!("Reading bucket at offset {}", offset);
-        return Bucket::unpack(&mut self.buffer);
+        return Bucket::unpack(&mut *buffer);
     }
 
     fn write_bucket(&self, bucket: &Bucket) -> Result<()> {
-        self.buffer
+        let mut buffer = self.buffer.borrow_mut();
+        buffer
             .seek(io::SeekFrom::Start(bucket.offset))
             .context("Seeking to bucket's offset")?;
-        bucket.pack(&mut self.buffer)?;
-        self.buffer.flush()?;
+        bucket.pack(&mut *buffer)?;
+        buffer.flush()?;
         Ok(())
     }
 
@@ -267,14 +275,15 @@ where
     }
 
     fn update_segment(&self, segment: Segment) -> Result<()> {
+        let mut buffer = self.buffer.borrow_mut();
         debug!("Updating segment depth to {}", segment.depth);
-        self.buffer.seek(io::SeekFrom::Start(segment.offset))?;
-        self.buffer.write_all(&segment.depth.to_le_bytes())?;
-        self.buffer.flush()?;
+        buffer.seek(io::SeekFrom::Start(segment.offset))?;
+        buffer.write_all(&segment.depth.to_le_bytes())?;
+        buffer.flush()?;
         let index = Self::segment_offset_to_index(&segment);
-        if self.segment_depth_cache.contains_key(&index) {
-            self.segment_depth_cache.insert(index, segment.depth);
-        }
+        //if self.segment_depth_cache.contains_key(&index) {
+        //    self.segment_depth_cache.insert(index, segment.depth);
+        //}
         Ok(())
     }
 }
