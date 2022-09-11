@@ -19,6 +19,11 @@ struct ThreadSafeSegmenter {
 impl Segmenter for ThreadSafeSegmenter {
     type Header = u8;
     type Record = bucket::Record;
+    type Config = ();
+
+    fn init(config: Self::Config) -> Result<Self> {
+        todo!()
+    }
 
     fn segment(&self, index: u32) -> Result<Segment> {
         let k = &index.to_le_bytes()[..];

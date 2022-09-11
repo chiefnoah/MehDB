@@ -3,6 +3,7 @@ use crate::serializer::{DataOrOffset, Serializable};
 use anyhow::{Context, Result};
 use log::{debug, info, trace, warn};
 use simple_error::SimpleError;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, BufWriter, Cursor, Read, Seek, Write};
@@ -10,7 +11,7 @@ use std::iter::Iterator;
 use std::mem::size_of;
 use std::ops::{Index, IndexMut};
 use std::path::Path;
-use std::cell::RefCell;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 // The number of buckets in each segment.
 // This may be adapted to be parametrizable on a per-database level
@@ -48,13 +49,15 @@ impl Serializable for Segment {
 }
 
 /// A Segmenter is a something responsible for allocating and reading segments
-pub trait Segmenter {
+pub trait Segmenter: Sized {
     /// Header is a Sized type used to identify the offset for reading and writing segments. Some
     /// implementations will have a 0-sized header. The `BasicSegmenter` will have a u64 header for
     /// storing `num_segments`. Implementations can expose a way to read the header in their API,
     /// but it is not strictly necessary.
     type Header;
     type Record;
+    type Config;
+    fn init(config: Self::Config) -> Result<Self>;
     /// Attempts to read an existing segment.
     fn segment(&self, index: u32) -> Result<Segment>;
     /// Creates a new segment and returns a tuple containing the index of the newly created segment
@@ -98,48 +101,20 @@ impl Serializable for u32 {
 
 pub struct BasicSegmenter<B: Read + Write + Seek> {
     buffer: RefCell<B>,
-    num_segments: u32,
-    header_dirty: bool,
+    num_segments: AtomicU32,
     // Maps segment index to depth
     //segment_depth_cache: HashMap<u32, u8>,
     iter_index: usize,
 }
 
 impl<B: Read + Write + Seek> BasicSegmenter<B> {
-    pub fn init(mut buffer: B) -> Result<Self> {
-        buffer
-            .seek(io::SeekFrom::Start(0))
-            .context("Seeking to beginning of segment file.")?;
-        // Attempt to read the header and use it, otherwise initialize as new
-        let mut first_time = false;
-        let num_segments = match u32::unpack(&mut buffer) {
-            Ok(n) => n,
-            Err(e) => {
-                first_time = true;
-                0
-            }
-        };
-        let out = Self {
-            num_segments,
-            buffer: RefCell::new(buffer),
-            header_dirty: false,
-            //segment_depth_cache: HashMap::new(),
-            iter_index: 0,
-        };
-        if first_time {
-            out.allocate_segment(0)
-                .with_context(|| format!("Error initializing initial segment."))?;
-        }
-        Ok(out)
-    }
-
-    fn write_num_segments(&mut self) -> Result<()> {
+    fn write_num_segments(&self) -> Result<()> {
         let mut buffer = self.buffer.borrow_mut();
         buffer
             .seek(io::SeekFrom::Start(0))
             .context("Seeking to beginning of segment file.")?;
         buffer
-            .write_all(&self.num_segments.to_le_bytes())
+            .write_all(&self.num_segments.load(Ordering::Acquire).to_le_bytes())
             .context("Syncing num_segments")?;
         buffer.flush()?;
         Ok(())
@@ -158,6 +133,32 @@ where
     // For this implementation, the header is simply the u32 num_segments
     type Header = u32;
     type Record = bucket::Record;
+    type Config = B;
+    fn init(mut buffer: B) -> Result<Self> {
+        buffer
+            .seek(io::SeekFrom::Start(0))
+            .context("Seeking to beginning of segment file.")?;
+        // Attempt to read the header and use it, otherwise initialize as new
+        let mut first_time = false;
+        let num_segments = match u32::unpack(&mut buffer) {
+            Ok(n) => AtomicU32::new(n),
+            Err(e) => {
+                first_time = true;
+                AtomicU32::new(0)
+            }
+        };
+        let out = Self {
+            num_segments,
+            buffer: RefCell::new(buffer),
+            //segment_depth_cache: HashMap::new(),
+            iter_index: 0,
+        };
+        if first_time {
+            out.allocate_segment(0)
+                .with_context(|| format!("Error initializing initial segment."))?;
+        }
+        Ok(out)
+    }
     fn segment(&self, index: u32) -> Result<Segment> {
         let mut buffer = self.buffer.borrow_mut();
         let offset = ((index as usize * SEGMENT_SIZE) + size_of::<Self::Header>()) as u64;
@@ -172,7 +173,7 @@ where
         buffer.read_exact(&mut buf).with_context(|| {
             format!(
                 "Error reading segment local depth for segment index {}/{} with offset {}",
-                index, self.num_segments, offset
+                index, self.num_segments.load(Ordering::Relaxed), offset
             )
         })?;
         let depth = u8::from_le_bytes(buf);
@@ -182,9 +183,9 @@ where
 
     fn allocate_segment(&self, depth: u8) -> Result<(u32, Segment)> {
         debug!("Allocating empty segment with depth {}", depth);
-        let buffer = self.buffer.borrow_mut();
+        let mut buffer = self.buffer.borrow_mut();
         // Seek to the proper offset
-        let index = self.num_segments;
+        let index = self.num_segments.load(Ordering::Acquire);
         //------------------------------------------👇 for num_segments header in segments file
         let offset = ((index as usize * SEGMENT_SIZE) + size_of::<Self::Header>()) as u64;
         debug!("New segment offset: {}", offset);
@@ -199,7 +200,8 @@ where
         buffer
             .flush()
             .context("Flushing buffer after segment allocate.")?;
-        self.num_segments += 1;
+        drop(buffer);
+        self.num_segments.fetch_add(1, Ordering::Release);
         self.write_num_segments()
             .context("Syncronizing num_segments after allocating.")?;
         Ok((index, Segment { depth, offset }))
@@ -210,7 +212,7 @@ where
         // The number of buckets passed in *must* be the entire segment's buckets
         assert!(buckets.len() == BUCKETS_PER_SEGMENT);
 
-        let index = self.num_segments;
+        let index = self.num_segments.load(Ordering::Acquire);
         // ------------------------------------------👇 for num_segments header in segments file
         let offset = ((index as usize * SEGMENT_SIZE) + size_of::<Self::Header>()) as u64;
         info!("New segment offset: {}", offset);
@@ -228,15 +230,15 @@ where
         for (i, bucket) in buckets.iter().enumerate() {
             debug!("Writing bucket with index {}", i);
             bucket
-                .pack(&mut *buffer)
+                .pack(&mut buffer_w)
                 .with_context(|| format!("Writing bucket with index {}", i))?;
         }
-        buffer
+        buffer_w
             .flush()
             .context("Flushing outer buffer after segment allocate.")?;
+        drop(buffer_w);
         drop(buffer);
-        let index = self.num_segments;
-        self.num_segments += 1;
+        let index = self.num_segments.fetch_add(1, Ordering::Release);
         self.write_num_segments()
             .context("Syncronizing num_segments after allocating.")?;
         let end_of_buffer = self
@@ -271,7 +273,7 @@ where
     }
 
     fn num_segments(&self) -> Result<u32> {
-        Ok(self.num_segments)
+        Ok(self.num_segments.load(Ordering::Acquire))
     }
 
     fn update_segment(&self, segment: Segment) -> Result<()> {
@@ -321,14 +323,14 @@ mod tests {
 
     #[test]
     fn segmenter_init_syncs_num_segments() {
-        let mut segmenter = inmemory_segmenter();
+        let segmenter = inmemory_segmenter();
         let num_segments = segmenter.num_segments().unwrap();
         assert_eq!(num_segments, 1);
     }
 
     #[test]
     fn segmenter_init_initializes_first_segment() {
-        let mut segmenter = inmemory_segmenter();
+        let segmenter = inmemory_segmenter();
         const HEADER_SIZE: usize =
             size_of::<<BasicSegmenter<Cursor<Vec<u8>>> as Segmenter>::Header>();
         let first_segment = segmenter.segment(0).unwrap();
@@ -348,14 +350,14 @@ mod tests {
         let r = bucket.get(123).unwrap();
         assert_eq!(r.hash_key, 123);
         assert_eq!(r.value, 456);
-
+        let buffer = segmenter.buffer.borrow();
         let expected_size = SEGMENT_SIZE + HEADER_SIZE;
-        assert_eq!(segmenter.buffer.into_inner().len(), expected_size);
+        assert_eq!(buffer.get_ref().len(), expected_size);
     }
 
     #[test]
     fn segmenter_initialize_segment_correct_size() {
-        let mut segmenter = inmemory_segmenter();
+        let segmenter = inmemory_segmenter();
         const HEADER_SIZE: usize =
             size_of::<<BasicSegmenter<Cursor<Vec<u8>>> as Segmenter>::Header>();
         let first_segment = segmenter.segment(0).unwrap();
@@ -367,13 +369,14 @@ mod tests {
         assert_eq!(another_second_segment.offset, second_segment.offset);
         assert_eq!(another_second_segment.depth, second_segment.depth);
         let expected_buffer_length = HEADER_SIZE + 2 * (SEGMENT_SIZE);
-        let actual_len = segmenter.buffer.into_inner().len();
+        let buffer = segmenter.buffer.borrow();
+        let actual_len = buffer.get_ref().len();
         assert_eq!(actual_len, expected_buffer_length);
     }
 
     #[test]
     fn allocate_segment_doesnt_overwrite_previous_bucket() {
-        let mut segmenter = inmemory_segmenter();
+        let segmenter = inmemory_segmenter();
         let segment = segmenter.segment(0).expect("Unable to get segment.");
         let mut last_bucket_first_segment = segmenter
             .bucket(&segment, BUCKETS_PER_SEGMENT as u32 - 1)
@@ -395,7 +398,7 @@ mod tests {
 
     #[test]
     fn allocate_segment_with_buckets_doesnt_overwrite_previous_bucket() {
-        let mut segmenter = inmemory_segmenter();
+        let segmenter = inmemory_segmenter();
         let segment = segmenter.segment(0).expect("Unable to get segment.");
         let mut last_bucket_first_segment = segmenter
             .bucket(&segment, BUCKETS_PER_SEGMENT as u32 - 1)
@@ -423,7 +426,7 @@ mod tests {
     use crate::segment::bucket::BUCKET_RECORDS;
     #[test]
     fn allocate_many_segments() {
-        let mut segmenter = inmemory_segmenter();
+        let segmenter = inmemory_segmenter();
         for z in 1..10 {
             let mut buckets = Vec::<Bucket>::with_capacity(BUCKETS_PER_SEGMENT);
             for i in 0..BUCKETS_PER_SEGMENT {

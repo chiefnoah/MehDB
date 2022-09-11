@@ -158,7 +158,7 @@ enum AnyRWLockGuard<'a, T> {
     UPGRADABLE(RwLockUpgradableReadGuard<'a, T>),
     EMPTY,
 }
-struct LockFileProxy<'a> {
+pub struct LockFileProxy<'a> {
     pool: &'a RWFilePool,
     guard: AnyRWLockGuard<'a, ()>,
     file: Reusable<'a, File>,
