@@ -83,7 +83,7 @@ impl<'a> RWFilePool {
             .context("Opening rw file.")
     }
 
-    fn init(path: PathBuf, ro_capacity: usize, rw_capacity: usize) -> Result<Self> {
+    pub fn init(path: PathBuf, ro_capacity: usize, rw_capacity: usize) -> Result<Self> {
         let dummy = OpenOptions::new()
             .create(true)
             .truncate(false)
