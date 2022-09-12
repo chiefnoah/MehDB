@@ -28,27 +28,6 @@ pub struct Segment {
     pub index: u32,
 }
 
-impl Serializable for Segment {
-    /// packs a Segment's depth. Assumes buffer has alread Seeked to offset
-    fn pack<W: Write + Seek>(&self, buffer: &mut W) -> Result<u64> {
-        buffer
-            .write_all(&self.depth.to_le_bytes())
-            .with_context(|| format!("Error packing segmenter at offset {}", self.offset))?;
-        Ok(self.offset)
-    }
-
-    /// unpacks a segment's depth. Assumes buffer has already Seeked to proper offset
-    fn unpack<R: Read + Seek>(buffer: &mut R) -> Result<Self> {
-        let offset = buffer.seek(io::SeekFrom::Current(0))?;
-        let mut b: [u8; 1] = [0; 1];
-        buffer
-            .read_exact(&mut b)
-            .with_context(|| format!("Error unpacking segment at offset {}", offset))?;
-        let depth = u8::from_le_bytes(b);
-        Ok(Self { offset, depth, index: 0 })
-    }
-}
-
 /// A Segmenter is a something responsible for allocating and reading segments
 pub trait Segmenter: Sized {
     /// Header is a Sized type used to identify the offset for reading and writing segments. Some

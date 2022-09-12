@@ -10,17 +10,28 @@ use std::mem::size_of;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
+use std::default::Default;
 
-struct ThreadSafeSegmenter {
+pub struct ThreadSafeSegmenter {
     // TODO: add a LRU cache for segment depth
     file_handles: RWFilePool,
     num_segments: AtomicU32,
 }
 
-struct ThreadSafeSegmenterConfig {
+pub struct ThreadSafeSegmenterConfig {
     read_files: usize,
     write_files: usize,
     path: PathBuf,
+}
+
+impl Default for ThreadSafeSegmenterConfig {
+    fn default() -> Self {
+        Self {
+            read_files: 8,
+            write_files: 9,
+            path: PathBuf::from("./segment.bin"),
+        }
+    }
 }
 
 impl Segmenter for ThreadSafeSegmenter {

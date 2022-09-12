@@ -1,7 +1,8 @@
 use crate::directory::{Directory, MMapDirectory, MMapDirectoryConfig};
 use crate::segment::file_segmenter::file_segmenter;
 use crate::segment::{
-    self, BasicSegmenter, Bucket, Record, Segment, Segmenter, BUCKETS_PER_SEGMENT,
+    self, BasicSegmenter, Bucket, Record, Segment, Segmenter, ThreadSafeSegmenter,
+    ThreadSafeSegmenterConfig, BUCKETS_PER_SEGMENT,
 };
 use crate::serializer::{self, DataOrOffset, Serializable, SimpleFileTransactor, Transactor};
 use anyhow::{anyhow, Context, Result};
@@ -22,8 +23,7 @@ use crate::serializer::{ByteKey, ByteValue};
 pub struct MehDB {
     hasher_key: highway::Key,
     directory: MMapDirectory,
-    segmenter: BasicSegmenter<File>,
-    //transactor: SimpleFileTransactor,
+    segmenter: ThreadSafeSegmenter,
 }
 
 const HEADER_SIZE: u64 = 16;
@@ -39,12 +39,8 @@ impl MehDB {
         };
         let segment_file_path = path.join("segments.bin");
         let directory_file_path = path.join("directory.bin");
-        let segmenter = file_segmenter(Some(&segment_file_path)).with_context(|| {
-            format!(
-                "Unable to initialize file_segmenter at path {}",
-                segment_file_path.into_os_string().into_string().unwrap()
-            )
-        })?;
+        let segmenter = ThreadSafeSegmenter::init(Default::default())
+            .context("Initializing thread-safe segmenter")?;
         let mmap_dir_config = MMapDirectoryConfig {
             path: directory_file_path,
         };
