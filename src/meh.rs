@@ -114,7 +114,7 @@ impl MehDB {
         }
         info!("Writing bucket to segment.");
         self.segmenter
-            .write_bucket(&bucket)
+            .write_bucket(&segment, &bucket)
             .with_context(|| format!("Saving updated bucket at offset {}", bucket.offset))
     }
     pub fn get(&mut self, key: serializer::ByteKey) -> Option<Record> {

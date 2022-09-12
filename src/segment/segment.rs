@@ -25,6 +25,7 @@ pub const SEGMENT_SIZE: usize = (BUCKET_SIZE * BUCKETS_PER_SEGMENT) + 1;
 pub struct Segment {
     pub depth: u8,
     pub offset: u64,
+    pub index: u32,
 }
 
 impl Serializable for Segment {
@@ -44,7 +45,7 @@ impl Serializable for Segment {
             .read_exact(&mut b)
             .with_context(|| format!("Error unpacking segment at offset {}", offset))?;
         let depth = u8::from_le_bytes(b);
-        Ok(Self { offset, depth })
+        Ok(Self { offset, depth, index: 0 })
     }
 }
 
@@ -73,7 +74,7 @@ pub trait Segmenter: Sized {
     /// responsible for providing the appropriate locking mechanism to prevent race-conditions.
     fn bucket(&self, segment: &Segment, index: u32) -> Result<Bucket>;
     /// Overwrites an existing bucket.
-    fn write_bucket(&self, bucket: &Bucket) -> Result<()>;
+    fn write_bucket(&self, segment: &Segment, bucket: &Bucket) -> Result<()>;
     /// Returns the *current* number of segements allocated. This may or may not be cached
     /// in-memory. Implementations that save segements to non-volatile storage *should* store this
     /// value along with the segments. If the implementation supports concurrency, this should
@@ -118,11 +119,6 @@ impl<B: Read + Write + Seek> BasicSegmenter<B> {
             .context("Syncing num_segments")?;
         buffer.flush()?;
         Ok(())
-    }
-
-    fn segment_offset_to_index(segment: &Segment) -> u32 {
-        return ((segment.offset as usize - size_of::<<BasicSegmenter<B> as Segmenter>::Header>())
-            / SEGMENT_SIZE) as u32;
     }
 }
 
@@ -178,7 +174,7 @@ where
         })?;
         let depth = u8::from_le_bytes(buf);
         //self.segment_depth_cache.insert(index, depth);
-        Ok(Segment { depth, offset })
+        Ok(Segment { depth, offset, index })
     }
 
     fn allocate_segment(&self, depth: u8) -> Result<(u32, Segment)> {
@@ -204,7 +200,7 @@ where
         self.num_segments.fetch_add(1, Ordering::Release);
         self.write_num_segments()
             .context("Syncronizing num_segments after allocating.")?;
-        Ok((index, Segment { depth, offset }))
+        Ok((index, Segment { depth, offset, index }))
     }
 
     fn allocate_with_buckets(&self, buckets: Vec<Bucket>, depth: u8) -> Result<(u32, Segment)> {
@@ -247,7 +243,7 @@ where
             .seek(io::SeekFrom::End(0))
             .context("Seeking to end of buffer")?;
         trace!("End of buffer: {}", end_of_buffer);
-        Ok((index, Segment { offset, depth }))
+        Ok((index, Segment { offset, depth, index }))
     }
 
     fn bucket(&self, segment: &Segment, index: u32) -> Result<Bucket> {
@@ -262,7 +258,7 @@ where
         return Bucket::unpack(&mut *buffer);
     }
 
-    fn write_bucket(&self, bucket: &Bucket) -> Result<()> {
+    fn write_bucket(&self, segment: &Segment, bucket: &Bucket) -> Result<()> {
         let mut buffer = self.buffer.borrow_mut();
         buffer
             .seek(io::SeekFrom::Start(bucket.offset))
@@ -282,10 +278,6 @@ where
         buffer.seek(io::SeekFrom::Start(segment.offset))?;
         buffer.write_all(&segment.depth.to_le_bytes())?;
         buffer.flush()?;
-        let index = Self::segment_offset_to_index(&segment);
-        //if self.segment_depth_cache.contains_key(&index) {
-        //    self.segment_depth_cache.insert(index, segment.depth);
-        //}
         Ok(())
     }
 }
@@ -305,6 +297,7 @@ mod tests {
         let segment = Segment {
             depth: 5,
             offset: 3,
+            index: 0,
         };
         let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
         let result = segment.pack(&mut buf).unwrap();
@@ -334,6 +327,11 @@ mod tests {
         const HEADER_SIZE: usize =
             size_of::<<BasicSegmenter<Cursor<Vec<u8>>> as Segmenter>::Header>();
         let first_segment = segmenter.segment(0).unwrap();
+        let segment = Segment {
+            depth: 0,
+            offset: 0,
+            index: 0,
+        };
         // Get the last bucket
         let mut bucket = segmenter
             .bucket(&first_segment, BUCKETS_PER_SEGMENT as u32 - 1)
@@ -342,7 +340,7 @@ mod tests {
             .put(123, 456, 0)
             .expect("Unable to insert record into bucket");
         segmenter
-            .write_bucket(&bucket)
+            .write_bucket(&segment, &bucket)
             .expect("Unable to write bucket to segment");
         let bucket = segmenter
             .bucket(&first_segment, BUCKETS_PER_SEGMENT as u32 - 1)
@@ -385,7 +383,7 @@ mod tests {
             .put(123, 456, 0)
             .expect("Unable to insert record into bucket.");
         segmenter
-            .write_bucket(&last_bucket_first_segment)
+            .write_bucket(&segment, &last_bucket_first_segment)
             .expect("Saving bucket back to ");
         segmenter
             .allocate_segment(0)
@@ -407,7 +405,7 @@ mod tests {
             .put(123, 456, 0)
             .expect("Unable to insert record into bucket.");
         segmenter
-            .write_bucket(&last_bucket_first_segment)
+            .write_bucket(&segment, &last_bucket_first_segment)
             .expect("Saving bucket back to ");
         let mut buckets = Vec::<Bucket>::with_capacity(BUCKETS_PER_SEGMENT);
         for bi in 0..BUCKETS_PER_SEGMENT {
