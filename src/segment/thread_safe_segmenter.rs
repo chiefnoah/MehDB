@@ -19,8 +19,11 @@ pub struct ThreadSafeSegmenter {
 }
 
 pub struct ThreadSafeSegmenterConfig {
+    /// The number of reader file handles to open for the RW pool
     read_files: usize,
+    /// The number of RW file handles to open for the RW pool
     write_files: usize,
+    /// The Folder path to store segment files in
     path: PathBuf,
 }
 
@@ -28,14 +31,14 @@ impl Default for ThreadSafeSegmenterConfig {
     fn default() -> Self {
         Self {
             read_files: 8,
-            write_files: 9,
+            write_files: 4,
             path: PathBuf::from("./segment.bin"),
         }
     }
 }
 
 impl Segmenter for ThreadSafeSegmenter {
-    type Header = u8;
+    type Header = u32;
     type Record = bucket::Record;
     type Config = ThreadSafeSegmenterConfig;
 
@@ -51,6 +54,7 @@ impl Segmenter for ThreadSafeSegmenter {
                 AtomicU32::new(0)
             }
         };
+        info!("Num segments: {}", &num_segments.load(Ordering::Acquire));
         drop(file);
         let out = Self {
             num_segments,
@@ -64,7 +68,6 @@ impl Segmenter for ThreadSafeSegmenter {
     }
 
     fn segment(&self, index: u32) -> Result<Segment> {
-        let k = &index.to_le_bytes()[..];
         // Get a file-handle
         let mut buffer = self.file_handles.ro_file(index);
         let offset = ((index as usize * SEGMENT_SIZE) + size_of::<Self::Header>()) as u64;
@@ -89,7 +92,7 @@ impl Segmenter for ThreadSafeSegmenter {
     fn allocate_segment(&self, depth: u8) -> Result<(u32, Segment)> {
         debug!("Allocating empty segment with depth {}", depth);
         // Seek to the proper offset
-        let index = self.num_segments.load(Ordering::Acquire);
+        let index = self.num_segments.fetch_add(1, Ordering::AcqRel);
         //------------------------------------------👇 for num_segments header in segments file
         let offset = ((index as usize * SEGMENT_SIZE) + size_of::<Self::Header>()) as u64;
         debug!("New segment offset: {}", offset);
@@ -111,7 +114,7 @@ impl Segmenter for ThreadSafeSegmenter {
             .context("Seeking to beginning of segment file.")?;
         // Write the number_of_segments, and simultaneously swap the atomic
         buffer
-            .write_all(&(self.num_segments.fetch_add(1, Ordering::AcqRel) + 1).to_le_bytes())
+            .write_all(&(self.num_segments.load(Ordering::Acquire)).to_le_bytes())
             .context("Syncing num_segments")?;
         buffer.flush()?;
         Ok((
@@ -128,7 +131,8 @@ impl Segmenter for ThreadSafeSegmenter {
         // The number of buckets passed in *must* be the entire segment's buckets
         assert!(buckets.len() == BUCKETS_PER_SEGMENT);
 
-        let index = self.num_segments.load(Ordering::Acquire);
+        let index = self.num_segments.fetch_add(1, Ordering::AcqRel);
+        info!("New segment index: {}", &index);
         let mut buffer = self.file_handles.rw_file(index);
         // ------------------------------------------👇 for num_segments header in segments file
         let offset = ((index as usize * SEGMENT_SIZE) + size_of::<Self::Header>()) as u64;
@@ -156,11 +160,10 @@ impl Segmenter for ThreadSafeSegmenter {
         drop(buffer_w);
         // Write the number_of_segments, and simultaneously swap the atomic
         buffer
-            .write_all(&(self.num_segments.fetch_add(1, Ordering::AcqRel) + 1).to_le_bytes())
+            .write_all(&(self.num_segments.load(Ordering::Acquire)).to_le_bytes())
             .context("Syncing num_segments")?;
         buffer.flush()?;
         drop(buffer);
-        let index = self.num_segments.fetch_add(1, Ordering::Release);
         Ok((
             index,
             Segment {
@@ -180,7 +183,7 @@ impl Segmenter for ThreadSafeSegmenter {
             .seek(io::SeekFrom::Start(offset))
             .context("Seeking to bucket's offset")?;
         debug!("Reading bucket at offset {}", offset);
-        return Bucket::unpack(&mut *buffer);
+        return Bucket::unpack(&mut (*buffer));
     }
 
     fn write_bucket(&self, segment: &Segment, bucket: &Bucket) -> Result<()> {

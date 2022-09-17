@@ -52,7 +52,7 @@ impl MehDB {
         Ok(mehdb)
     }
 
-    fn bucket_for_key(&mut self, key: &[u64; 4]) -> Result<Bucket> {
+    fn bucket_for_key(&self, key: &[u64; 4]) -> Result<Bucket> {
         let segment_index = self
             .directory
             .segment_index(key[0])
@@ -67,7 +67,7 @@ impl MehDB {
         self.segmenter.bucket(&segment, bucket_index)
     }
 
-    pub fn put(&mut self, key: serializer::ByteKey, value: serializer::ByteValue) -> Result<()> {
+    pub fn put(&self, key: serializer::ByteKey, value: serializer::ByteValue) -> Result<()> {
         let hasher = HighwayHasher::new(self.hasher_key);
         // We only need the first u64 of the returned value because
         // It's unlikely we have the hard drive space to support a u64 deep directory
@@ -78,7 +78,7 @@ impl MehDB {
         let segment_index = self
             .directory
             .segment_index(hash_key[0])
-            .with_context(|| format!("Unable to get segment offset for {:?}", hash_key))?;
+            .with_context(|| format!("Unable to get segment index for {:?}", hash_key))?;
         debug!("Segment index {}", segment_index);
         let segment = self
             .segmenter
@@ -113,7 +113,7 @@ impl MehDB {
             .write_bucket(&segment, &bucket)
             .with_context(|| format!("Saving updated bucket at offset {}", bucket.offset))
     }
-    pub fn get(&mut self, key: serializer::ByteKey) -> Option<Record> {
+    pub fn get(&self, key: serializer::ByteKey) -> Option<Record> {
         let hasher = HighwayHasher::new(self.hasher_key);
         // We only need the first u64 of the returned value because
         // It's unlikely we have the hard drive space to support a u64 deep directory
@@ -131,7 +131,7 @@ impl MehDB {
         bucket.get(hash_key[0])
     }
 
-    fn split_segment(&mut self, segment: Segment, hk: u64) -> Result<()> {
+    fn split_segment(&self, segment: Segment, hk: u64) -> Result<()> {
         info!("Splitting segment");
         let mut segment = segment;
         let mut global_depth = self

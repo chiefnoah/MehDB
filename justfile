@@ -17,7 +17,7 @@ run: clean
     cargo run
 
 watch-run:
-    fd -g '*.rs' | entr -c sh -c 'rm -f segments.bin && cargo run'
+    fd -g '*.rs' | entr -c sh -c 'rm -f *.bin && cargo run'
 
 watch-slowly:
     fd -g '*.rs' | taskpolicy -c background entr -c cargo test
