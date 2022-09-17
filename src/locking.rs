@@ -55,7 +55,7 @@ impl<T> StripedRWLock<T> {
 // Partially inspired by object-pool crate
 // https://crates.io/crates/object-pool
 pub struct RWFilePool {
-    dummy: File,
+    pub global_file: Mutex<File>,
     path: PathBuf,
     ro_files: Pool<File>,
     rw_files: Pool<File>,
@@ -84,7 +84,7 @@ impl<'a> RWFilePool {
     }
 
     pub fn init(path: PathBuf, ro_capacity: usize, rw_capacity: usize) -> Result<Self> {
-        let dummy = OpenOptions::new()
+        let global_file = OpenOptions::new()
             .create(true)
             .truncate(false)
             .write(true)
@@ -95,7 +95,7 @@ impl<'a> RWFilePool {
         let rw_files = Pool::new(rw_capacity, || RWFilePool::open_rw_file(&path).unwrap());
         let locks_vec = vec![(); (1.5 * ro_capacity as f64).round() as usize];
         Ok(Self {
-            dummy,
+            global_file: Mutex::new(global_file),
             path,
             ro_files,
             rw_files,
@@ -136,7 +136,7 @@ impl<'a> RWFilePool {
     }
 
     /// A thread-safe way to pull a read-write File-like proxy according to StripedRWLock semantics.
-    pub fn upgradeable_rw_file(&'a self, i: u32) -> LockFileProxy<'a> {
+    pub fn upgradeable_ro_file(&'a self, i: u32) -> LockFileProxy<'a> {
         let k = &i.to_le_bytes()[..];
         let guard = self.locks.get(k).upgradable_read();
         let file = self.ro_files.pull(|| {
@@ -156,7 +156,7 @@ enum AnyRWLockGuard<'a, T> {
     RO(RwLockReadGuard<'a, T>),
     RW(RwLockWriteGuard<'a, T>),
     UPGRADABLE(RwLockUpgradableReadGuard<'a, T>),
-    EMPTY,
+    EMPTY, // This only exists so we can swap from UPGRADEABLE to RW
 }
 pub struct LockFileProxy<'a> {
     pool: &'a RWFilePool,
@@ -180,7 +180,7 @@ impl<'a> DerefMut for LockFileProxy<'a> {
 impl<'a> LockFileProxy<'a> {
     /// Upgrades the internal RwLockUpgradeableReadGuard to a RwLockWriteGuard, replacing the
     /// internal file handle and lock with the the equivalents with the correct permissions
-    fn upgrade(&mut self) -> Result<()> {
+    pub fn upgrade(&mut self) -> Result<()> {
         match &self.guard {
             AnyRWLockGuard::UPGRADABLE(g) => {
                 // Replace the existing guard with a temporary value

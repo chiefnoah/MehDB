@@ -159,7 +159,7 @@ impl Directory for MMapDirectory {
         let mut temporary_file = NamedTempFile::new()?;
         let f = temporary_file.as_file_mut();
         let global_depth = unlocked[0];
-        info!(
+        warn!(
             "Increase global_depth from {} to {}",
             global_depth,
             global_depth + 1
