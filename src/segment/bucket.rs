@@ -1,8 +1,8 @@
 use crate::serializer::Serializable;
 use anyhow::{Context, Result};
 use log::{debug, info, trace};
-use std::error::Error;
 use std::default::Default;
+use std::error::Error;
 use std::fmt;
 use std::io::{self, Read, Seek, Write};
 use std::mem::size_of;
@@ -50,7 +50,7 @@ impl Default for Bucket {
     fn default() -> Self {
         Self {
             offset: 0,
-            buf: [0; BUCKET_SIZE]
+            buf: [0; BUCKET_SIZE],
         }
     }
 }

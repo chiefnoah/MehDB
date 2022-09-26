@@ -1,10 +1,11 @@
 use anyhow::{anyhow, Context, Result};
+use crossbeam::sync::ShardedLock;
 use log::{debug, error, info, trace, warn};
 use memmap::{Mmap, MmapMut};
-use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::PathBuf;
+use std::sync::PoisonError;
 use tempfile::NamedTempFile;
 
 pub trait Directory<T: Sized = Self>: Sized {
@@ -19,7 +20,7 @@ pub trait Directory<T: Sized = Self>: Sized {
 
 pub struct MemoryDirectory {
     // dir contains the directory and the global depth in a tuple
-    dir: RwLock<(Vec<u32>, u8)>,
+    dir: ShardedLock<(Vec<u32>, u8)>,
 }
 
 impl Directory for MemoryDirectory {
@@ -30,12 +31,15 @@ impl Directory for MemoryDirectory {
         let mut dir: Vec<u32> = Vec::with_capacity(1);
         dir.push(initial_index);
         Ok(MemoryDirectory {
-            dir: RwLock::new((dir, 0)),
+            dir: ShardedLock::new((dir, 0)),
         })
     }
 
     fn segment_index(&self, i: u64) -> Result<u32> {
-        let unlocked = self.dir.read();
+        let unlocked = match self.dir.read() {
+            Err(e) => return Err(anyhow!("Directory lock is probably poisoned.")),
+            Ok(l) => l,
+        };
         let dir: &Vec<u32> = &unlocked.0;
         let global_depth = unlocked.1;
         // TODO: just bounds check, we shouldn't take in an un global_depth normalized key here
@@ -53,13 +57,19 @@ impl Directory for MemoryDirectory {
         }
     }
     fn set_segment_index(&self, i: u64, index: u32) -> Result<()> {
-        let mut dir = self.dir.write();
-        dir.0[i as usize] = index;
+        let mut unlocked = match self.dir.write() {
+            Err(e) => return Err(anyhow!("Directory lock is probably poisoned.")),
+            Ok(l) => l,
+        };
+        unlocked.0[i as usize] = index;
         Ok(())
     }
 
     fn grow(&self) -> Result<u32> {
-        let mut dir = self.dir.write();
+        let mut dir = match self.dir.write() {
+            Err(e) => return Err(anyhow!("Directory lock is probably poisoned.")),
+            Ok(l) => l,
+        };
         let len = dir.0.len();
         info!("Growing directory. New size: {}", len * 2);
         // Copy so we can use `iter()` later
@@ -76,7 +86,10 @@ impl Directory for MemoryDirectory {
 
     fn global_depth(&self) -> Result<u8> {
         // Get a read-only handle on the directory
-        let dir = self.dir.read();
+        let dir = match self.dir.read() {
+            Err(e) => return Err(anyhow!("Directory lock is probably poisoned.")),
+            Ok(l) => l,
+        };
         Ok(dir.1)
     }
 }
@@ -84,16 +97,12 @@ impl Directory for MemoryDirectory {
 pub struct MMapDirectory {
     // We do not actually use the mutable nature of RwLock, just
     // as a guard to turn Mmap into a MmapMut
-    map: RwLock<MmapMut>,
-    config: MMapDirectoryConfig,
-}
-
-pub struct MMapDirectoryConfig {
-    pub path: PathBuf,
+    map: ShardedLock<MmapMut>,
+    config: PathBuf, // We only care about the path for now
 }
 
 impl Directory for MMapDirectory {
-    type Config = MMapDirectoryConfig;
+    type Config = PathBuf;
     fn init(config: Self::Config) -> Result<Self> {
         // TODO: better error handling
         let file = OpenOptions::new()
@@ -101,7 +110,7 @@ impl Directory for MMapDirectory {
             .write(true)
             .truncate(false) // Don't clear the file, we need it!
             .create(true)
-            .open(&config.path)
+            .open(&config)
             .context("Opening up mmap file")
             .expect("Unable to initialize mmap file.");
         if file.metadata().unwrap().len() == 0 {
@@ -113,13 +122,16 @@ impl Directory for MMapDirectory {
         // If the mmap is empty or new, make it writeable, populate the global_
         let global_depth = map[0];
         Ok(Self {
-            map: RwLock::new(map),
+            map: ShardedLock::new(map),
             config,
         })
     }
 
     fn segment_index(&self, i: u64) -> Result<u32> {
-        let unlocked = self.map.read();
+        let unlocked = match self.map.read() {
+            Err(e) => return Err(anyhow!("Directory lock is probably poisoned.")),
+            Ok(l) => l,
+        };
         let global_depth = unlocked[0];
         let index = if global_depth == 0 {
             // Lazy way to get out of overflowing bitshift
@@ -143,7 +155,10 @@ impl Directory for MMapDirectory {
     }
 
     fn set_segment_index(&self, i: u64, index: u32) -> Result<()> {
-        let mut unlocked = self.map.write();
+        let mut unlocked = match self.map.write() {
+            Err(e) => return Err(anyhow!("Directory lock is probably poisoned.")),
+            Ok(l) => l,
+        };
         // We have a RW lock now
         let offset = ((i * 4) + 1) as usize;
         info!("Setting dir index {} to segment index {}", i, index);
@@ -153,10 +168,13 @@ impl Directory for MMapDirectory {
     }
 
     fn grow(&self) -> Result<u32> {
-        let unlocked = self.map.upgradable_read();
+        let unlocked = match self.map.read() {
+            Err(e) => return Err(anyhow!("Directory lock is probably poisoned.")),
+            Ok(l) => l,
+        };
         // Create a temporary file, we'll fill this with the contents of the current map, but
         // duplicated per the rules of a MSP extendible hashing directory
-        let mut dir_path = self.config.path.clone();
+        let mut dir_path = self.config.clone();
         dir_path.pop();
         let mut temporary_file = NamedTempFile::new_in(dir_path)?;
         let f = temporary_file.as_file_mut();
@@ -186,16 +204,23 @@ impl Directory for MMapDirectory {
         // We're done preparing our file, tine to upgrade our handle on the memorymap, copy over
         // the new file and re-load the mmap reference
         let f = temporary_file
-            .persist(&self.config.path)
+            .persist(&self.config)
             .context("Copying over new grown directory file over existing filepath.")?;
         let new_map = unsafe { MmapMut::map_mut(&f)? };
-        let mut unlocked = RwLockUpgradableReadGuard::upgrade(unlocked);
+        drop(unlocked);
+        let mut unlocked = match self.map.write() {
+            Err(e) => return Err(anyhow!("Directory lock is probably poisoned.")),
+            Ok(l) => l,
+        };
         *unlocked = new_map;
         Ok(0)
     }
 
     fn global_depth(&self) -> Result<u8> {
-        let unlocked = self.map.read();
+        let unlocked = match self.map.read() {
+            Err(e) => return Err(anyhow!("Directory lock is probably poisoned.")),
+            Ok(l) => l,
+        };
         match unlocked.get(0) {
             None => Err(anyhow!("Unable to read global depth from mmap file.")),
             Some(g) => Ok(*g),

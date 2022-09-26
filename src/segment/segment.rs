@@ -1,15 +1,18 @@
+use crate::locking::{SegmentNode, StripedLock};
 use crate::segment::bucket::{Bucket, BUCKET_SIZE};
 use crate::serializer::{DataOrOffset, Serializable};
 use anyhow::{Context, Result};
-use log::{debug, info, warn, trace};
+use log::{debug, info, trace, warn};
 use simple_error::SimpleError;
 use std::collections::HashMap;
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter, Cursor, Read, Seek, Write};
 use std::iter::Iterator;
 use std::mem::size_of;
 use std::ops::{Index, IndexMut};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
 
 // The number of buckets in each segment.
 // This may be adapted to be parametrizable on a per-database level
@@ -62,8 +65,7 @@ pub trait Segmenter {
     fn allocate_segment(&mut self, depth: u8) -> Result<(u32, Segment)>;
     /// The same as `Segmenter.allocate_segment` except instead of empty buckets it writes the
     /// provided buckets.
-    fn allocate_with_buckets(&mut self, buckets: Vec<Bucket>, depth: u8)
-        -> Result<(u32, Segment)>;
+    fn allocate_with_buckets(&mut self, buckets: Vec<Bucket>, depth: u8) -> Result<(u32, Segment)>;
     /// Retrieves a bucket from segment at bucket index. The resulting bucket can be modified and synced
     /// back to to the Segmenter using `write_bucket`. Implementations that support concurrency are
     /// responsible for providing the appropriate locking mechanism to prevent race-conditions.
@@ -101,7 +103,6 @@ pub struct BasicSegmenter<B: Read + Write + Seek> {
     header_dirty: bool,
     // Maps segment index to depth
     segment_depth_cache: HashMap<u32, u8>,
-    iter_index: usize,
 }
 
 impl<B: Read + Write + Seek> BasicSegmenter<B> {
@@ -123,7 +124,6 @@ impl<B: Read + Write + Seek> BasicSegmenter<B> {
             buffer,
             header_dirty: false,
             segment_depth_cache: HashMap::new(),
-            iter_index: 0,
         };
         if first_time {
             out.allocate_segment(0)
@@ -200,11 +200,7 @@ where
         Ok((index, Segment { depth, offset }))
     }
 
-    fn allocate_with_buckets(
-        &mut self,
-        buckets: Vec<Bucket>,
-        depth: u8,
-    ) -> Result<(u32, Segment)> {
+    fn allocate_with_buckets(&mut self, buckets: Vec<Bucket>, depth: u8) -> Result<(u32, Segment)> {
         // The number of buckets passed in *must* be the entire segment's buckets
         assert!(buckets.len() == BUCKETS_PER_SEGMENT);
 
@@ -276,9 +272,191 @@ where
         self.buffer.flush()?;
         let index = Self::segment_offset_to_index(&segment);
         if self.segment_depth_cache.contains_key(&index) {
-            self.segment_depth_cache
-                .insert(index, segment.depth);
+            self.segment_depth_cache.insert(index, segment.depth);
         }
+        Ok(())
+    }
+}
+
+pub struct ThreadSafeFileSegmenter {
+    num_segments: Arc<AtomicU32>,
+    path: PathBuf,
+    file: File,
+}
+
+impl Clone for ThreadSafeFileSegmenter {
+    fn clone(&self) -> Self {
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .create(true)
+            .open(&self.path)
+            .expect("Unable to clone ThreadSafeSegmenter<File>");
+        Self {
+            num_segments: self.num_segments.clone(),
+            path: self.path.clone(),
+            file,
+        }
+    }
+}
+
+impl Segmenter for ThreadSafeFileSegmenter {
+    // For this implementation, the header is simply the u32 num_segments
+    type Header = u32;
+    fn segment(&mut self, index: u32) -> Result<Segment> {
+        let offset = ((index as usize * SEGMENT_SIZE) + size_of::<Self::Header>()) as u64;
+        self.file.seek(io::SeekFrom::Start(offset))?;
+        let mut buf: [u8; 1] = [0; 1];
+        self.file.read_exact(&mut buf).with_context(|| {
+            format!(
+                "Error reading segment local depth for segment index {}/{} with offset {}",
+                index,
+                self.num_segments.load(Ordering::Acquire),
+                offset
+            )
+        })?;
+        let depth = u8::from_le_bytes(buf);
+        Ok(Segment { depth, offset })
+    }
+
+    fn allocate_segment(&mut self, depth: u8) -> Result<(u32, Segment)> {
+        debug!("Allocating empty segment with depth {}", depth);
+        // Seek to the proper offset
+        let index = self.num_segments.fetch_add(1, Ordering::SeqCst);
+        //------------------------------------------👇 for num_segments header in segments file
+        let offset = ((index as usize * SEGMENT_SIZE) + size_of::<Self::Header>()) as u64;
+        debug!("New segment offset: {}", offset);
+        self.file
+            .seek(io::SeekFrom::Start(offset))
+            .with_context(|| format!("Seeking to new segment's offset {}", offset))?;
+        let mut buf: [u8; SEGMENT_SIZE] = [0; SEGMENT_SIZE];
+        buf[..1].copy_from_slice(&depth.to_le_bytes());
+        self.file
+            .write_all(&buf)
+            .context("Writing new segment bytes")?;
+        self.file
+            .flush()
+            .context("Flushing buffer after segment allocate.")?;
+        self.num_segments.fetch_add(1, Ordering::Release);
+        self.write_num_segments()
+            .context("Syncronizing num_segments after allocating.")?;
+        Ok((index, Segment { depth, offset }))
+    }
+
+    fn allocate_with_buckets(&mut self, buckets: Vec<Bucket>, depth: u8) -> Result<(u32, Segment)> {
+        // The number of buckets passed in *must* be the entire segment's buckets
+        assert!(buckets.len() == BUCKETS_PER_SEGMENT);
+
+        let index = self.num_segments.fetch_add(1, Ordering::SeqCst);
+        // ------------------------------------------👇 for num_segments header in segments file
+        let offset = ((index as usize * SEGMENT_SIZE) + size_of::<Self::Header>()) as u64;
+        info!("New segment offset: {}", offset);
+        // We create a BufWriter because we're going to be writing a lot and don't want to flush it
+        // until we're done.
+        let mut buffer = BufWriter::with_capacity(SEGMENT_SIZE as usize, &mut self.file);
+        buffer
+            .seek(io::SeekFrom::Start(offset))
+            .context("Seeking to new segment location")?;
+        let mut buf: [u8; 1] = [0; 1];
+        buf[..].copy_from_slice(&depth.to_le_bytes());
+        buffer
+            .write_all(&buf)
+            .context("Writing new segment's depth.")?;
+        for (i, bucket) in buckets.iter().enumerate() {
+            debug!("Writing bucket with index {}", i);
+            bucket
+                .pack(&mut buffer)
+                .with_context(|| format!("Writing bucket with index {}", i))?;
+        }
+        buffer
+            .flush()
+            .context("Flushing outer buffer after segment allocate.")?;
+        drop(buffer);
+        self.write_num_segments()
+            .context("Syncronizing num_segments after allocating.")?;
+        let end_of_buffer = self
+            .file
+            .seek(io::SeekFrom::End(0))
+            .context("Seeking to end of buffer")?;
+        trace!("End of buffer: {}", end_of_buffer);
+        Ok((index, Segment { offset, depth }))
+    }
+
+    fn bucket(&mut self, segment: &Segment, index: u32) -> Result<Bucket> {
+        assert!(index < BUCKETS_PER_SEGMENT as u32);
+        //----------------------------------------------------------👇 for segment_depth
+        let offset = segment.offset + (index as usize * BUCKET_SIZE) as u64 + 1;
+        self.file
+            .seek(io::SeekFrom::Start(offset))
+            .context("Seeking to bucket's offset")?;
+        debug!("Reading bucket at offset {}", offset);
+        return Bucket::unpack(&mut self.file);
+    }
+
+    fn write_bucket(&mut self, bucket: &Bucket) -> Result<()> {
+        self.file
+            .seek(io::SeekFrom::Start(bucket.offset))
+            .context("Seeking to bucket's offset")?;
+        bucket.pack(&mut self.file)?;
+        self.file.flush()?;
+        Ok(())
+    }
+
+    fn num_segments(&mut self) -> Result<u32> {
+        Ok(self.num_segments.load(Ordering::Acquire))
+    }
+
+    fn update_segment(&mut self, segment: Segment) -> Result<()> {
+        debug!("Updating segment depth to {}", segment.depth);
+        self.file.seek(io::SeekFrom::Start(segment.offset))?;
+        self.file.write_all(&segment.depth.to_le_bytes())?;
+        self.file.flush()?;
+        Ok(())
+    }
+}
+
+impl ThreadSafeFileSegmenter {
+    /// Sets up and initializes the
+    pub fn init(path: PathBuf) -> Result<Self> {
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .create(true)
+            .open(&path)
+            .expect("Unable to clone ThreadSafeFileSegmenter");
+        file.seek(io::SeekFrom::Start(0))
+            .context("Seeking to beginning of segment file.")?;
+        let mut first_time = false;
+        // Attempt to read the header and use it, otherwise initialize as new
+        let num_segments = match u32::unpack(&mut file) {
+            Ok(n) => n,
+            Err(e) => {
+                first_time = true;
+                0
+            }
+        };
+        let mut out = Self {
+            file,
+            path,
+            num_segments: Arc::new(AtomicU32::new(num_segments)),
+        };
+        if first_time {
+            out.allocate_segment(0)
+                .context("Error initializing first segment.")?;
+        }
+
+        Ok(out)
+    }
+    fn write_num_segments(&mut self) -> Result<()> {
+        self.file
+            .seek(io::SeekFrom::Start(0))
+            .context("Seeking to beginning of segment file.")?;
+        self.file
+            .write_all(&self.num_segments.load(Ordering::Acquire).to_le_bytes())
+            .context("Syncing num_segments")?;
+        self.file.flush()?;
         Ok(())
     }
 }

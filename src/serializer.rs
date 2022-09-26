@@ -1,10 +1,10 @@
+use anyhow::{Context, Result};
 use log::info;
 use std::default::Default;
 use std::fs::File;
 use std::io;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use anyhow::{Context, Result};
 
 /// Types that implement `Serializable` should pack all or some of their properties into the
 /// provided buffer. It is not a requirement to call `Write::flush()`, it should be assumed that it
@@ -15,7 +15,7 @@ pub trait Serializable: Sized {
     fn unpack<R: Read + Seek>(buffer: &mut R) -> Result<Self>;
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Clone)]
 pub struct ByteKey(pub Vec<u8>);
 
 #[derive(Debug, Eq, PartialEq)]
@@ -87,7 +87,8 @@ impl SimpleFileTransactor {
                 .expect("Time went backwards");
             let b = u64::try_from(e.as_millis()).unwrap().to_le_bytes();
             file.write(&b).context("Writing new file transactor.")?;
-            file.flush().context("Flushing new file transactor buffer")?;
+            file.flush()
+                .context("Flushing new file transactor buffer")?;
             e
         };
         Ok(SimpleFileTransactor {

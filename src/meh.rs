@@ -1,7 +1,9 @@
-use crate::directory::{Directory, MMapDirectory, MMapDirectoryConfig};
+use crate::directory::{Directory, MMapDirectory};
+use crate::locking::{SegmentNode, StripedLock};
 use crate::segment::file_segmenter::file_segmenter;
 use crate::segment::{
-    self, BasicSegmenter, Bucket, Record, Segment, Segmenter, BUCKETS_PER_SEGMENT,
+    self, BasicSegmenter, Bucket, Record, Segment, Segmenter, ThreadSafeFileSegmenter,
+    BUCKETS_PER_SEGMENT,
 };
 use crate::serializer::{self, DataOrOffset, Serializable, SimpleFileTransactor, Transactor};
 use anyhow::{anyhow, Context, Result};
@@ -12,6 +14,7 @@ use std::hash::Hasher;
 use std::io::{self, Read, Seek, Write};
 use std::mem::size_of;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 use bitvec::prelude::*;
 use highway::{self, HighwayHash, HighwayHasher};
@@ -19,49 +22,38 @@ use highway::{self, HighwayHash, HighwayHasher};
 use crate::serializer::{ByteKey, ByteValue};
 
 // My Extendible Hash Database
+#[derive(Clone)]
 pub struct MehDB {
-    hasher_key: highway::Key,
-    directory: MMapDirectory,
-    segmenter: BasicSegmenter<File>,
-    //transactor: SimpleFileTransactor,
+    // TODO: make an init or something so we don't have to deal with this
+    pub hasher_key: highway::Key,
+    pub directory: Arc<MMapDirectory>,
+    pub segmenter: ThreadSafeFileSegmenter,
+    pub lock: Arc<StripedLock<SegmentNode>>,
+    pub segment_file_lock: Arc<Mutex<()>>,
 }
+
+//impl Clone for MehDB {
+//    fn clone(&self) -> Self {
+//        Self {
+//            hasher_key: self.hasher_key.clone(),
+//            directory: self.directory.clone(),
+//            segmenter: self.segmenter.clone(),
+//            lock: self.lock.clone(),
+//        }
+//    }
+//}
 
 const HEADER_SIZE: u64 = 16;
 
 /// A Extendible hashing implementation that does not support multithreading.
 impl MehDB {
-    // New creates a new instance of MehDB with it's data in optional path.
-    pub fn init(path: Option<&Path>) -> Result<Self> {
-        let path: &Path = match path {
-            Some(path) => path,
-            // Default to the current directory
-            None => Path::new("."),
-        };
-        let segment_file_path = path.join("segments.bin");
-        let directory_file_path = path.join("directory.bin");
-        let segmenter = file_segmenter(Some(&segment_file_path)).with_context(|| {
-            format!(
-                "Unable to initialize file_segmenter at path {}",
-                segment_file_path.into_os_string().into_string().unwrap()
-            )
-        })?;
-        let mmap_dir_config = MMapDirectoryConfig{
-            path: directory_file_path
-        };
-        let mehdb = MehDB {
-            hasher_key: highway::Key([53252, 2352323, 563956259, 234832]), // TODO: change this
-            directory: MMapDirectory::init(mmap_dir_config).context("Creating mmap dir.")?,
-            segmenter,
-        };
-        Ok(mehdb)
-    }
-
     fn bucket_for_key(&mut self, key: &[u64; 4]) -> Result<Bucket> {
         let segment_index = self
             .directory
             .segment_index(key[0])
             .with_context(|| format!("Unable to get segment offset for {:?}", key))?;
         debug!("Segment index {}", segment_index);
+        let segment_lock = self.lock.get(segment_index).read();
         let segment = self
             .segmenter
             .segment(segment_index)
@@ -83,12 +75,17 @@ impl MehDB {
             .directory
             .segment_index(hash_key[0])
             .with_context(|| format!("Unable to get segment offset for {:?}", hash_key))?;
+        let segment_node = self.lock.get(segment_index).read();
+        let bucket_index = ((BUCKETS_PER_SEGMENT - 1) as u64 & hash_key[3]) as u32;
+        let bucket_lock = segment_node
+            .get_bucket_lock(bucket_index)
+            .context("Getting bucket lock")?
+            .write();
         debug!("Segment index {}", segment_index);
         let segment = self
             .segmenter
             .segment(segment_index)
             .with_context(|| format!("Unable to read segment with index {}", segment_index))?;
-        let bucket_index = ((BUCKETS_PER_SEGMENT - 1) as u64 & hash_key[3]) as u32;
         debug!("Reading bucket at index: {}", bucket_index);
         let mut bucket = self
             .segmenter
@@ -99,8 +96,12 @@ impl MehDB {
             // Overflowed the bucket!
             Err(e) => {
                 info!("Bucket overflowed. Allocating new segment and splitting.");
+                // Drop these locks before we split, because we'll need to get write locks to the
+                // segment and maybe directory
+                drop(bucket_lock);
+                drop(segment_node);
                 let offset = segment.offset;
-                self.split_segment(segment, hash_key[0])
+                self.split_segment(segment, hash_key[0], segment_index)
                     .with_context(|| format!("Splitting segement at offset {}", offset))?;
                 // TODO: don't be so inneficient. We already know the hash_key!
                 // Call put again, it may end up in a new bucket or in the same one that's now had
@@ -135,10 +136,14 @@ impl MehDB {
         bucket.get(hash_key[0])
     }
 
-    fn split_segment(&mut self, segment: Segment, hk: u64) -> Result<()> {
+    fn split_segment(&mut self, segment: Segment, hk: u64, segment_index: u32) -> Result<()> {
         info!("Splitting segment");
         let mut segment = segment;
-        let mut global_depth = self.directory.global_depth().context("Reading current global depth")?;
+        let segment_lock = self.lock.get(segment_index).write();
+        let mut global_depth = self
+            .directory
+            .global_depth()
+            .context("Reading current global depth")?;
         // If we need to expand the directory size
         if segment.depth == global_depth {
             match self.directory.grow() {
@@ -183,11 +188,16 @@ impl MehDB {
 
         //TODO: refactor this to be more idiomatic
         info!("Allocating new segment with depth {}", new_depth);
+        let segment_file_guard = match self.segment_file_lock.lock() {
+            Err(e) => return Err(anyhow!("Segment file mutex was poisoned")),
+            _ => ()
+        };
         let (new_segment_index, new_segment) =
             match self.segmenter.allocate_with_buckets(new_buckets, new_depth) {
                 Ok(s) => s,
                 Err(e) => return Err(e.context("Allocating new segment with populated buckets.")),
             };
+        drop(segment_file_guard);
         let s = hk >> 64 - global_depth;
         let step = 1 << (global_depth - new_depth);
         let mut start_dir_entry = if segment.depth == 0 {
