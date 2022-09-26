@@ -36,14 +36,16 @@ fn main() -> Result<()> {
         lock: Arc::new(lock),
         segment_file_lock: Arc::new(Mutex::new(())),
     };
-    let mut threads: Vec<JoinHandle<()>> = Vec::with_capacity(4);
+    let mut write_threads: Vec<JoinHandle<()>> = Vec::with_capacity(4);
     const RECORDS: usize = 10_000_000;
     const THREADS: usize = 4;
     let start_time = Instant::now();
-    for _ in 0..THREADS {
+    for thread_id in 0..THREADS {
         let mut db = mehdb.clone();
-        threads.push(spawn(move || {
-            for i in 0..RECORDS / THREADS {
+        write_threads.push(spawn(move || {
+            let min = thread_id * (RECORDS / THREADS);
+            let max = thread_id * 2 * (RECORDS / THREADS);
+            for i in thread_id * (RECORDS / THREADS)..max {
                 info!("i: {}", i);
                 let i = i as u64;
                 let key = ByteKey(i.to_le_bytes().to_vec());
@@ -52,7 +54,7 @@ fn main() -> Result<()> {
                     .context("Error inserting record")
                     .expect("Unable to insert record!");
             }
-            for i in 0..RECORDS / THREADS {
+            for i in thread_id * (RECORDS / THREADS)..RECORDS / THREADS {
                 let i = i as u64;
                 let key = ByteKey(i.to_le_bytes().to_vec());
                 let r = db.get(key).expect(&format!("Missing record for {}", i));
@@ -60,7 +62,7 @@ fn main() -> Result<()> {
             }
         }));
     }
-    for thread in threads.into_iter() {
+    for thread in write_threads.into_iter() {
         thread.join().expect("Thread paniced...");
     }
     let end_time = start_time.elapsed().as_secs_f64();
