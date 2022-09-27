@@ -1,11 +1,10 @@
 use crate::directory::{Directory, MMapDirectory};
 use crate::locking::{SegmentNode, StripedLock};
-use crate::segment::file_segmenter::file_segmenter;
 use crate::segment::{
-    self, BasicSegmenter, Bucket, Record, Segment, Segmenter, ThreadSafeFileSegmenter,
+    self, Bucket, Record, Segment, Segmenter, ThreadSafeFileSegmenter,
     BUCKETS_PER_SEGMENT,
 };
-use crate::serializer::{self, DataOrOffset, Serializable, SimpleFileTransactor, Transactor};
+use crate::serializer::{self, DataOrOffset, Serializable};
 use anyhow::{anyhow, Context, Result};
 use log::{debug, error, info, warn};
 use std::default::Default;
@@ -29,31 +28,39 @@ pub struct MehDB {
     pub directory: Arc<MMapDirectory>,
     pub segmenter: ThreadSafeFileSegmenter,
     pub lock: Arc<StripedLock<SegmentNode>>,
-    pub segment_file_lock: Arc<Mutex<()>>,
 }
-
-//impl Clone for MehDB {
-//    fn clone(&self) -> Self {
-//        Self {
-//            hasher_key: self.hasher_key.clone(),
-//            directory: self.directory.clone(),
-//            segmenter: self.segmenter.clone(),
-//            lock: self.lock.clone(),
-//        }
-//    }
-//}
 
 const HEADER_SIZE: u64 = 16;
 
 /// A Extendible hashing implementation that does not support multithreading.
 impl MehDB {
     fn bucket_for_key(&mut self, key: &[u64; 4]) -> Result<Bucket> {
-        let segment_index = self
+        let mut segment_index = self
             .directory
             .segment_index(key[0])
             .with_context(|| format!("Unable to get segment offset for {:?}", key))?;
-        debug!("Segment index {}", segment_index);
-        let segment_lock = self.lock.get(segment_index).read();
+        let mut segment_lock = self.lock.get(segment_index);
+        let mut segment_node = segment_lock.read();
+        let mut segment_index_double_check = self
+            .directory
+            .segment_index(key[0])
+            .with_context(|| format!("Unable to get segment offset for {:?}", key))?;
+
+        while segment_index != segment_index_double_check {
+            warn!(
+                "Segment changed after acquiring lock. {} -> {}. Retrying lock.",
+                segment_index, segment_index_double_check
+            );
+            drop(segment_node);
+            drop(segment_lock);
+            segment_index = segment_index_double_check;
+            segment_lock = self.lock.get(segment_index);
+            segment_node = segment_lock.read();
+            segment_index_double_check = self
+                .directory
+                .segment_index(key[0])
+                .with_context(|| format!("Unable to get segment offset for {:?}", key))?;
+        }
         let segment = self
             .segmenter
             .segment(segment_index)
@@ -71,11 +78,33 @@ impl MehDB {
         // TODO: support the full 256 bit keyspace for magical distributed system support
         let hash_key = hasher.hash256(&key.0);
         info!("hash_key: {:?}\tvalue: {}", hash_key, value.0);
-        let segment_index = self
+        let mut segment_index = self
             .directory
             .segment_index(hash_key[0])
             .with_context(|| format!("Unable to get segment offset for {:?}", hash_key))?;
-        let segment_node = self.lock.get(segment_index).read();
+        let mut segment_lock = self.lock.get(segment_index);
+        let mut segment_node = segment_lock.read();
+        let mut segment_index_double_check = self
+            .directory
+            .segment_index(hash_key[0])
+            .with_context(|| format!("Unable to get segment offset for {:?}", hash_key))?;
+
+        while segment_index != segment_index_double_check {
+            warn!(
+                "Segment changed after acquiring lock. {} -> {}. Retrying lock.",
+                segment_index, segment_index_double_check
+            );
+            drop(segment_node);
+            drop(segment_lock);
+            segment_index = segment_index_double_check;
+            segment_lock = self.lock.get(segment_index);
+            segment_node = segment_lock.read();
+            segment_index_double_check = self
+                .directory
+                .segment_index(hash_key[0])
+                .with_context(|| format!("Unable to get segment offset for {:?}", hash_key))?;
+        }
+
         let bucket_index = ((BUCKETS_PER_SEGMENT - 1) as u64 & hash_key[3]) as u32;
         let bucket_lock = segment_node
             .get_bucket_lock(bucket_index)
@@ -188,16 +217,11 @@ impl MehDB {
 
         //TODO: refactor this to be more idiomatic
         info!("Allocating new segment with depth {}", new_depth);
-        let segment_file_guard = match self.segment_file_lock.lock() {
-            Err(e) => return Err(anyhow!("Segment file mutex was poisoned")),
-            _ => ()
-        };
         let (new_segment_index, new_segment) =
             match self.segmenter.allocate_with_buckets(new_buckets, new_depth) {
                 Ok(s) => s,
                 Err(e) => return Err(e.context("Allocating new segment with populated buckets.")),
             };
-        drop(segment_file_guard);
         let s = hk >> 64 - global_depth;
         let step = 1 << (global_depth - new_depth);
         let mut start_dir_entry = if segment.depth == 0 {
