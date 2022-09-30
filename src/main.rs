@@ -27,7 +27,7 @@ fn main() -> Result<()> {
     pretty_env_logger::init();
     let segmenter = ThreadSafeFileSegmenter::init("./segment.bin".into())?;
     let directory = MMapDirectory::init("./directory.bin".into())?;
-    const THREADS: usize = 8;
+    const THREADS: usize = 16;
     let lock = StripedLock::init((THREADS * 2) + 10);
     let mehdb = MehDB {
         hasher_key: highway::Key([53252, 2352323, 563956259, 234832]),

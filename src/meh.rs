@@ -17,6 +17,7 @@ use std::sync::{Arc, Mutex};
 
 use bitvec::prelude::*;
 use highway::{self, HighwayHash, HighwayHasher};
+use parking_lot::{RwLockWriteGuard, RwLockUpgradableReadGuard};
 
 use crate::serializer::{ByteKey, ByteValue};
 
@@ -82,8 +83,8 @@ impl MehDB {
             .directory
             .segment_index(hash_key[0])
             .with_context(|| format!("Unable to get segment offset for {:?}", hash_key))?;
-        let mut segment_lock = self.lock.get(segment_index);
-        let mut segment_node = segment_lock.read();
+        let mut segment_locker = self.lock.get(segment_index);
+        let mut segment_node = segment_locker.upgradable_read();
         let mut segment_index_double_check = self
             .directory
             .segment_index(hash_key[0])
@@ -95,10 +96,10 @@ impl MehDB {
                 segment_index, segment_index_double_check
             );
             drop(segment_node);
-            drop(segment_lock);
+            drop(segment_locker);
             segment_index = segment_index_double_check;
-            segment_lock = self.lock.get(segment_index);
-            segment_node = segment_lock.read();
+            segment_locker = self.lock.get(segment_index);
+            segment_node = segment_locker.upgradable_read();
             segment_index_double_check = self
                 .directory
                 .segment_index(hash_key[0])
@@ -128,9 +129,10 @@ impl MehDB {
                 // Drop these locks before we split, because we'll need to get write locks to the
                 // segment and maybe directory
                 drop(bucket_lock);
-                drop(segment_node);
+                drop(segment_locker);
                 let offset = segment.offset;
-                self.split_segment(segment, hash_key[0], segment_index)
+                let write_lock = RwLockUpgradableReadGuard::upgrade(segment_node);
+                self.split_segment(segment, hash_key[0], segment_index, write_lock)
                     .with_context(|| format!("Splitting segement at offset {}", offset))?;
                 // TODO: don't be so inneficient. We already know the hash_key!
                 // Call put again, it may end up in a new bucket or in the same one that's now had
@@ -165,10 +167,10 @@ impl MehDB {
         bucket.get(hash_key[0])
     }
 
-    fn split_segment(&mut self, segment: Segment, hk: u64, segment_index: u32) -> Result<()> {
+    fn split_segment(&self, segment: Segment, hk: u64, segment_index: u32, lock: RwLockWriteGuard<SegmentNode>) -> Result<()> {
         info!("Splitting segment");
         let mut segment = segment;
-        let segment_lock = self.lock.get(segment_index).write();
+        // get a write lock
         let mut global_depth = self
             .directory
             .global_depth()
