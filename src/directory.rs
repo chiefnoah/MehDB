@@ -16,6 +16,7 @@ pub trait Directory<T: Sized = Self>: Sized {
     /// Doubles the size of the directory and returns the new size (not the global_depth)
     fn grow(&self) -> Result<u32>;
     fn global_depth(&self) -> Result<u8>;
+    fn grow_if_eq(&self, local_depth: u8) -> Result<u8>;
 }
 
 pub struct MemoryDirectory {
@@ -92,6 +93,18 @@ impl Directory for MemoryDirectory {
         };
         Ok(dir.1)
     }
+
+    fn grow_if_eq(&self, local_depth: u8) -> Result<u8> {
+        if self.global_depth()? == local_depth {
+            return match self.grow() {
+                Err(e) => Err(e),
+                Ok(_) => Ok(self.global_depth()?)
+            }
+        }
+        Ok(self.global_depth()?)
+    }
+
+
 }
 
 pub struct MMapDirectory {
@@ -226,4 +239,57 @@ impl Directory for MMapDirectory {
             Some(g) => Ok(*g),
         }
     }
+
+    fn grow_if_eq(&self, local_depth: u8) -> Result<u8> {
+        let mut unlocked = match self.map.write() {
+            Err(e) => return Err(anyhow!("Directory lock is probably poisoned.")),
+            Ok(l) => l,
+        };
+        let global_depth = match unlocked.get(0) {
+            None => return Err(anyhow!("Unable to read global depth from mmap file.")),
+            Some(g) => {
+                if *g > local_depth {
+                    return Ok(*g)
+                }
+                *g
+            },
+        };
+        // Create a temporary file, we'll fill this with the contents of the current map, but
+        // duplicated per the rules of a MSP extendible hashing directory
+        let mut dir_path = self.config.clone();
+        dir_path.pop();
+        let mut temporary_file = NamedTempFile::new_in(dir_path)?;
+        let f = temporary_file.as_file_mut();
+        info!(
+            "Increase global_depth from {} to {}",
+            global_depth,
+            global_depth + 1
+        );
+        debug!(
+            "Old # of dir entries {} increasing to {}",
+            1 << global_depth,
+            1 << (global_depth + 1)
+        );
+        f.write(&[global_depth + 1])?;
+        for i in 0..1 << global_depth {
+            let offset = ((i * 4) + 1) as usize;
+            trace!("Reading old map at offsets[{}:{}]", offset, offset + 4);
+            let data = unlocked
+                .get(offset..offset + 4)
+                .expect("Somehow mmap file is smaller than expected, or this is a bug");
+            // Write exactly twice
+            f.write(data)?;
+            f.write(data)?;
+        }
+        f.flush().context("Flushing new dir tempfile")?;
+        // We're done preparing our file, tine to upgrade our handle on the memorymap, copy over
+        // the new file and re-load the mmap reference
+        let f = temporary_file
+            .persist(&self.config)
+            .context("Copying over new grown directory file over existing filepath.")?;
+        let new_map = unsafe { MmapMut::map_mut(&f)? };
+        *unlocked = new_map;
+        Ok(global_depth + 1)
+    }
+
 }

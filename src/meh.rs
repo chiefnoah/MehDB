@@ -1,8 +1,7 @@
 use crate::directory::{Directory, MMapDirectory};
 use crate::locking::{SegmentNode, StripedLock};
 use crate::segment::{
-    self, Bucket, Record, Segment, Segmenter, ThreadSafeFileSegmenter,
-    BUCKETS_PER_SEGMENT,
+    self, Bucket, Record, Segment, Segmenter, ThreadSafeFileSegmenter, BUCKETS_PER_SEGMENT,
 };
 use crate::serializer::{self, DataOrOffset, Serializable};
 use anyhow::{anyhow, Context, Result};
@@ -17,7 +16,7 @@ use std::sync::{Arc, Mutex};
 
 use bitvec::prelude::*;
 use highway::{self, HighwayHash, HighwayHasher};
-use parking_lot::{RwLockWriteGuard, RwLockUpgradableReadGuard};
+use parking_lot::{RwLockUpgradableReadGuard, RwLockWriteGuard};
 
 use crate::serializer::{ByteKey, ByteValue};
 
@@ -90,21 +89,26 @@ impl MehDB {
             .segment_index(hash_key[0])
             .with_context(|| format!("Unable to get segment offset for {:?}", hash_key))?;
 
+        // While the directory doesn't agree with what we grabbed last...
         while segment_index != segment_index_double_check {
-            warn!(
+            info!(
                 "Segment changed after acquiring lock. {} -> {}. Retrying lock.",
                 segment_index, segment_index_double_check
             );
+            // Drop the existing lock (we might lose our place here 🥲)
             drop(segment_node);
             drop(segment_locker);
             segment_index = segment_index_double_check;
             segment_locker = self.lock.get(segment_index);
+            // Acquire a new upgradable_read lock
             segment_node = segment_locker.upgradable_read();
             segment_index_double_check = self
                 .directory
                 .segment_index(hash_key[0])
                 .with_context(|| format!("Unable to get segment offset for {:?}", hash_key))?;
         }
+        //TODO: remove this assert
+        assert_eq!(segment_index_double_check, segment_index);
 
         let bucket_index = ((BUCKETS_PER_SEGMENT - 1) as u64 & hash_key[3]) as u32;
         let bucket_lock = segment_node
@@ -126,12 +130,12 @@ impl MehDB {
             // Overflowed the bucket!
             Err(e) => {
                 info!("Bucket overflowed. Allocating new segment and splitting.");
-                // Drop these locks before we split, because we'll need to get write locks to the
+                // Drop the bucket lock before we split, we don't need it
                 // segment and maybe directory
                 drop(bucket_lock);
-                drop(segment_locker);
                 let offset = segment.offset;
                 let write_lock = RwLockUpgradableReadGuard::upgrade(segment_node);
+                drop(segment_locker);
                 self.split_segment(segment, hash_key[0], segment_index, write_lock)
                     .with_context(|| format!("Splitting segement at offset {}", offset))?;
                 // TODO: don't be so inneficient. We already know the hash_key!
@@ -167,32 +171,21 @@ impl MehDB {
         bucket.get(hash_key[0])
     }
 
-    fn split_segment(&self, segment: Segment, hk: u64, segment_index: u32, lock: RwLockWriteGuard<SegmentNode>) -> Result<()> {
+    fn split_segment(
+        &self,
+        segment: Segment,
+        hk: u64,
+        segment_index: u32,
+        lock: RwLockWriteGuard<SegmentNode>,
+    ) -> Result<()> {
         info!("Splitting segment");
         let mut segment = segment;
-        // get a write lock
-        let mut global_depth = self
-            .directory
-            .global_depth()
-            .context("Reading current global depth")?;
         // If we need to expand the directory size
-        if segment.depth == global_depth {
-            match self.directory.grow() {
-                Ok(i) => {
-                    // Re-read the global_depth post-grow call. For most implementations, it should be
-                    // previous value + 1
-                    global_depth = self.directory.global_depth()?;
-                    debug!(
-                        "Grew directory. New depth: {}\tNew size: {}",
-                        global_depth, i
-                    );
-                }
-                Err(e) => {
-                    return Err(anyhow!(e));
-                }
-            };
-        }
-        info!("gobal_depth: {}", global_depth);
+        let global_depth = self
+            .directory
+            .grow_if_eq(segment.depth)
+            .context("Getting global depth, growing if local_depth == global_depth")?;
+        debug!("gobal_depth: {}", global_depth);
         let new_depth = segment.depth + 1;
         // The buckets that are being allocated to the new segment
         let mut new_buckets = Vec::<Bucket>::with_capacity(BUCKETS_PER_SEGMENT);
