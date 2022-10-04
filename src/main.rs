@@ -27,7 +27,7 @@ fn main() -> Result<()> {
     pretty_env_logger::init();
     let segmenter = ThreadSafeFileSegmenter::init("./segment.bin".into())?;
     let directory = MMapDirectory::init("./directory.bin".into())?;
-    const WRITE_THREADS: usize = 9;
+    const WRITE_THREADS: usize = 16;
     const READ_THREADS: usize = 16;
     let lock = StripedLock::init((WRITE_THREADS * 2) + 10);
     let mehdb = MehDB {
@@ -44,6 +44,7 @@ fn main() -> Result<()> {
         write_threads.push(spawn(move || {
             let min = thread_id * (RECORDS / WRITE_THREADS);
             let max = (thread_id + 1) * (RECORDS / WRITE_THREADS);
+            println!("Thread {}\tmin: {}\tmax: {}", thread_id, min, max);
             for i in min..max {
                 let i = i as u64;
                 let key = ByteKey(i.to_le_bytes().to_vec());
