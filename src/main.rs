@@ -21,14 +21,15 @@ use crate::serializer::{ByteKey, ByteValue};
 
 use anyhow::{Context, Result};
 use highway;
-use log::error;
+use log::{error, info};
 
 fn main() -> Result<()> {
     pretty_env_logger::init();
     let segmenter = ThreadSafeFileSegmenter::init("./segment.bin".into())?;
     let directory = MMapDirectory::init("./directory.bin".into())?;
-    const THREADS: usize = 8;
-    let lock = StripedLock::init((THREADS * 2) + 10);
+    const WRITE_THREADS: usize = 8;
+    const READ_THREADS: usize = 16;
+    let lock = StripedLock::init((WRITE_THREADS * 2) + 10);
     let mehdb = MehDB {
         hasher_key: highway::Key([53252, 2352323, 563956259, 234832]),
         directory: Arc::new(directory),
@@ -36,14 +37,14 @@ fn main() -> Result<()> {
         lock: Arc::new(lock),
     };
     let mut write_threads: Vec<JoinHandle<()>> = Vec::with_capacity(4);
-    const RECORDS: usize = 100_000;
+    const RECORDS: usize = 10_000_000;
     let start_time = Instant::now();
-    for thread_id in 0..THREADS {
+    for thread_id in 0..WRITE_THREADS {
         let mut db = mehdb.clone();
         write_threads.push(spawn(move || {
-            let min = thread_id * (RECORDS / THREADS);
-            let max = (thread_id + 1) * (RECORDS / THREADS);
-            for i in thread_id * (RECORDS / THREADS)..max {
+            let min = thread_id * (RECORDS / WRITE_THREADS);
+            let max = (thread_id + 1) * (RECORDS / WRITE_THREADS);
+            for i in thread_id * (RECORDS / WRITE_THREADS)..max {
                 //println!("Thread: {}\tInserting {}", thread_id, i);
                 let i = i as u64;
                 let key = ByteKey(i.to_le_bytes().to_vec());
@@ -54,8 +55,9 @@ fn main() -> Result<()> {
             }
         }));
     }
-    for thread in write_threads.into_iter() {
+    for (thread_id, thread) in write_threads.into_iter().enumerate() {
         thread.join().expect("Thread paniced...");
+        info!("Thread {} finished.", thread_id);
     }
     let end_time = start_time.elapsed().as_secs_f64();
     println!(
@@ -66,11 +68,11 @@ fn main() -> Result<()> {
     let mut read_threads: Vec<JoinHandle<bool>> = Vec::with_capacity(4);
     let start_time = Instant::now();
     // Read operations
-    for thread_id in 0..THREADS {
+    for thread_id in 0..READ_THREADS {
         let mut db = mehdb.clone();
         read_threads.push(spawn(move || {
-            let min = thread_id * (RECORDS / THREADS);
-            let max = (thread_id + 1) * (RECORDS / THREADS);
+            let min = thread_id * (RECORDS / READ_THREADS);
+            let max = (thread_id + 1) * (RECORDS / READ_THREADS);
             let mut errors = false;
             for i in min..max {
                 let i = i as u64;
@@ -78,10 +80,19 @@ fn main() -> Result<()> {
                 let r = db.get(key); //.expect(&format!("Missing record for {}", i));
                 match r {
                     None => {
-                        error!("Record missing for {} in thread {}", i, thread_id);
+                        //error!("Record missing for {} in thread {}", i, thread_id);
                         errors = true;
                     }
-                    _ => (),
+                    Some(r) => {
+                        if r.value != i * 2 {
+                            error!(
+                                "read value does not match: {}. Expected: {}",
+                                r.value,
+                                i * 2
+                            );
+                            errors = true;
+                        }
+                    }
                 }
                 //println!("k: {} v: {:?}", i, r);
             }

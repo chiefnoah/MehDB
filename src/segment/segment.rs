@@ -172,7 +172,6 @@ impl Segmenter for ThreadSafeFileSegmenter {
 
     fn allocate_with_buckets(&self, buckets: Vec<Bucket>, depth: u8) -> Result<(u32, Segment)> {
         // The number of buckets passed in *must* be the entire segment's buckets
-        assert!(buckets.len() == BUCKETS_PER_SEGMENT);
         let mut file = self.file.borrow_mut();
 
         let mut num_segments = self.segment_file_lock.lock();

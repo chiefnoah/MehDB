@@ -1,6 +1,6 @@
 use crate::serializer::Serializable;
 use anyhow::{Context, Result};
-use log::{debug, info, trace};
+use log::{debug, info, trace, warn};
 use std::default::Default;
 use std::error::Error;
 use std::fmt;
@@ -9,7 +9,7 @@ use std::mem::size_of;
 
 // The number of records in each bucket.
 // This may be adatped to be parametrizable or dynamic in the future.
-pub const BUCKET_RECORDS: usize = 16;
+pub const BUCKET_RECORDS: usize = 32;
 pub const BUCKET_SIZE: usize = BUCKET_RECORDS * size_of::<Record>();
 
 #[derive(Debug)]
@@ -100,9 +100,9 @@ impl Bucket {
     pub fn get(&self, hk: u64) -> Option<Record> {
         debug!("Searching bucket for {}", hk);
         for record in self.iter() {
-            debug!("Found hk: {}\tvalue: {}", record.hash_key, record.value);
+            warn!("Found hk: {}\tvalue: {}", record.hash_key, record.value);
             // Records where both hash_key and values are set to 0 are considered empty
-            if record.hash_key == hk && (record.value != 0 || hk != 0) {
+            if record.hash_key == hk {
                 return Some(record);
             }
         }

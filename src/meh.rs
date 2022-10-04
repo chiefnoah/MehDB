@@ -39,33 +39,43 @@ impl MehDB {
             .directory
             .segment_index(key[0])
             .with_context(|| format!("Unable to get segment offset for {:?}", key))?;
-        let mut segment_lock = self.lock.get(segment_index);
-        let mut segment_node = segment_lock.read();
+        let mut segment_locker = self.lock.get(segment_index);
+        let mut segment_node = segment_locker.read();
         let mut segment_index_double_check = self
             .directory
             .segment_index(key[0])
             .with_context(|| format!("Unable to get segment offset for {:?}", key))?;
 
+        // While the directory doesn't agree with what we grabbed last...
         while segment_index != segment_index_double_check {
-            warn!(
+            debug!(
                 "Segment changed after acquiring lock. {} -> {}. Retrying lock.",
                 segment_index, segment_index_double_check
             );
+            // Drop the existing lock (we might lose our place here 🥲)
             drop(segment_node);
-            drop(segment_lock);
+            drop(segment_locker);
             segment_index = segment_index_double_check;
-            segment_lock = self.lock.get(segment_index);
-            segment_node = segment_lock.read();
+            segment_locker = self.lock.get(segment_index);
+            // Acquire a new upgradable_read lock
+            segment_node = segment_locker.read();
             segment_index_double_check = self
                 .directory
                 .segment_index(key[0])
                 .with_context(|| format!("Unable to get segment offset for {:?}", key))?;
         }
+        //TODO: remove this assert
+        assert_eq!(segment_index_double_check, segment_index);
+        let bucket_index = ((BUCKETS_PER_SEGMENT - 1) as u64 & key[3]) as u32;
+        // Acquire a read lock on the bucket
+        let bucket_lock = segment_node
+            .get_bucket_lock(bucket_index)
+            .context("Getting bucket lock")?
+            .read();
         let segment = self
             .segmenter
             .segment(segment_index)
             .with_context(|| format!("Unable to read segment at offset {}", segment_index))?;
-        let bucket_index = ((BUCKETS_PER_SEGMENT - 1) as u64 & key[3]) as u32;
         debug!("Reading bucket at index: {}", bucket_index);
         self.segmenter.bucket(&segment, bucket_index)
     }
@@ -91,7 +101,7 @@ impl MehDB {
 
         // While the directory doesn't agree with what we grabbed last...
         while segment_index != segment_index_double_check {
-            info!(
+            debug!(
                 "Segment changed after acquiring lock. {} -> {}. Retrying lock.",
                 segment_index, segment_index_double_check
             );
