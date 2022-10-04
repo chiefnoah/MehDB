@@ -28,7 +28,7 @@ fn main() -> Result<()> {
     let segmenter = ThreadSafeFileSegmenter::init("./segment.bin".into())?;
     let directory = MMapDirectory::init("./directory.bin".into())?;
     const WRITE_THREADS: usize = 16;
-    const READ_THREADS: usize = 16;
+    const READ_THREADS: usize = 20;
     let lock = StripedLock::init((WRITE_THREADS * 2) + 10);
     let mehdb = MehDB {
         hasher_key: highway::Key([53252, 2352323, 563956259, 234832]),
@@ -37,7 +37,7 @@ fn main() -> Result<()> {
         lock: Arc::new(lock),
     };
     let mut write_threads: Vec<JoinHandle<()>> = Vec::with_capacity(4);
-    const RECORDS: usize = 10_000_000;
+    const RECORDS: usize = 40_000_000;
     let start_time = Instant::now();
     for thread_id in 0..WRITE_THREADS {
         let mut db = mehdb.clone();
@@ -77,8 +77,7 @@ fn main() -> Result<()> {
             for i in min..max {
                 let i = i as u64;
                 let key = ByteKey(i.to_le_bytes().to_vec());
-                let r = db.get(key); //.expect(&format!("Missing record for {}", i));
-                match r {
+                match  db.get(key) {
                     None => {
                         //error!("Record missing for {} in thread {}", i, thread_id);
                         errors = true;
