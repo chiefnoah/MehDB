@@ -14,7 +14,7 @@ watch:
     fd -g '*.rs' | entr -c cargo test
 
 run: clean
-    cargo run
+    cargo run --release
 
 watch-run:
     fd -g '*.rs' | entr -c sh -c 'rm -f *.bin && cargo run'
