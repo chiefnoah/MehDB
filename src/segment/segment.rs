@@ -279,16 +279,5 @@ impl ThreadSafeFileSegmenter {
 
         Ok(out)
     }
-    fn write_num_segments(&self, num_segments: u32) -> Result<()> {
-        let mut file = self.file.borrow_mut();
-        file
-            .seek(io::SeekFrom::Start(0))
-            .context("Seeking to beginning of segment file.")?;
-        file
-            .write_all(&num_segments.to_le_bytes())
-            .context("Syncing num_segments")?;
-        file.flush()?;
-        Ok(())
-    }
 }
 
