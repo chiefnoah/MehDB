@@ -245,7 +245,7 @@ impl MehDB {
                 .set_segment_index(start_dir_entry + i + step, new_segment_index, &mut global_depth)?;
         }
         drop(global_depth);
-        // Update the original
+        // Update the original segment
         segment.depth += 1;
         self.segmenter
             .update_segment(segment)
