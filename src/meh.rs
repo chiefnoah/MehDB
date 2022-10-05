@@ -227,19 +227,24 @@ impl MehDB {
                 Ok(s) => s,
                 Err(e) => return Err(e.context("Allocating new segment with populated buckets.")),
             };
-        let s = hk >> 64 - global_depth;
-        let step = 1 << (global_depth - new_depth);
+        let mut global_depth = self
+            .directory
+            .global_depth()
+            .context("Getting global depth + read lock.")?;
+        let s = hk >> 64 - *global_depth;
+        let step = 1 << (*global_depth - new_depth);
         let mut start_dir_entry = if segment.depth == 0 {
             0
         } else {
             hk >> 64 - segment.depth
         };
-        start_dir_entry = start_dir_entry << (global_depth - segment.depth);
+        start_dir_entry = start_dir_entry << (*global_depth - segment.depth);
         start_dir_entry = start_dir_entry - (start_dir_entry % 2);
         for i in 0..step {
             self.directory
-                .set_segment_index(start_dir_entry + i + step, new_segment_index)?;
+                .set_segment_index(start_dir_entry + i + step, new_segment_index, &mut global_depth)?;
         }
+        drop(global_depth);
         // Update the original
         segment.depth += 1;
         self.segmenter
