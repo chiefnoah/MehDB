@@ -1,10 +1,5 @@
-use std::collections::hash_map::{DefaultHasher, RandomState};
 use std::default::Default;
-use std::hash::{BuildHasher, Hasher};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
-use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
-use crate::serializer::Serializable;
 
 use anyhow::{anyhow, Context, Result};
 use crossbeam::utils::CachePadded;
@@ -61,7 +56,7 @@ impl Default for SegmentNode {
             locks.push(RwLock::new(()));
         }
         Self {
-            bucket_locks: locks.try_into().unwrap_or_else(|v| {
+            bucket_locks: locks.try_into().unwrap_or_else(|_| {
                 panic!("Unable to cast vec of locks to array when initializing a new SegmentNode.")
             }),
         }

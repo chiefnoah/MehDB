@@ -262,7 +262,7 @@ impl ThreadSafeFileSegmenter {
         // Attempt to read the header and use it, otherwise initialize as new
         let num_segments = match u32::unpack(&mut file) {
             Ok(n) => n,
-            Err(e) => {
+            Err(_) => {
                 first_time = true;
                 0
             }

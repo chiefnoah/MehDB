@@ -1,6 +1,3 @@
-#![allow(dead_code)]
-#![allow(unused_variables)]
-#![allow(unused_imports)]
 extern crate pretty_env_logger;
 
 pub mod directory;
@@ -27,7 +24,7 @@ fn main() -> Result<()> {
     pretty_env_logger::init();
     let segmenter = ThreadSafeFileSegmenter::init("./segment.bin".into())?;
     let directory = MMapDirectory::init("./directory.bin".into())?;
-    const WRITE_THREADS: usize = 16;
+    const WRITE_THREADS: usize = 12;
     const READ_THREADS: usize = 24;
     let lock = StripedLock::init((WRITE_THREADS * 2) + 10);
     let mehdb = MehDB {
@@ -37,7 +34,7 @@ fn main() -> Result<()> {
         lock: Arc::new(lock),
     };
     let mut write_threads: Vec<JoinHandle<()>> = Vec::with_capacity(4);
-    const RECORDS: usize = 100_000_000;
+    const RECORDS: usize = 10_000_000;
     let start_time = Instant::now();
     for thread_id in 0..WRITE_THREADS {
         let mut db = mehdb.clone();
@@ -76,7 +73,7 @@ fn main() -> Result<()> {
             for i in min..max {
                 let i = i as u64;
                 let key = ByteKey(i.to_le_bytes().to_vec());
-                match  db.get(key) {
+                match db.get(key) {
                     None => {
                         //error!("Record missing for {} in thread {}", i, thread_id);
                         errors = true;

@@ -1,24 +1,16 @@
 use crate::directory::{Directory, MMapDirectory};
 use crate::locking::{SegmentNode, StripedLock};
 use crate::segment::{
-    self, Bucket, Record, Segment, Segmenter, ThreadSafeFileSegmenter, BUCKETS_PER_SEGMENT,
+    Bucket, Record, Segment, Segmenter, ThreadSafeFileSegmenter, BUCKETS_PER_SEGMENT,
 };
-use crate::serializer::{self, DataOrOffset, Serializable};
-use anyhow::{anyhow, Context, Result};
-use log::{debug, error, info, warn};
-use std::default::Default;
-use std::fs::File;
-use std::hash::Hasher;
-use std::io::{self, Read, Seek, Write};
-use std::mem::size_of;
-use std::path::Path;
-use std::sync::{Arc, Mutex};
+use crate::serializer;
+use anyhow::{Context, Result};
+use log::{debug, info, warn};
+use std::sync::Arc;
 
-use bitvec::prelude::*;
 use highway::{self, HighwayHash, HighwayHasher};
 use parking_lot::{RwLockUpgradableReadGuard, RwLockWriteGuard};
 
-use crate::serializer::{ByteKey, ByteValue};
 
 // My Extendible Hash Database
 #[derive(Clone)]
@@ -30,7 +22,6 @@ pub struct MehDB {
     pub lock: Arc<StripedLock<SegmentNode>>,
 }
 
-const HEADER_SIZE: u64 = 16;
 
 /// A Extendible hashing implementation that does not support multithreading.
 impl MehDB {
@@ -68,7 +59,7 @@ impl MehDB {
         assert_eq!(segment_index_double_check, segment_index);
         let bucket_index = ((BUCKETS_PER_SEGMENT - 1) as u64 & key[3]) as u32;
         // Acquire a read lock on the bucket
-        let bucket_lock = segment_node
+        let _bucket_lock = segment_node
             .get_bucket_lock(bucket_index)
             .context("Getting bucket lock")?
             .read();
@@ -138,7 +129,7 @@ impl MehDB {
         debug!("Inserting record into bucket...");
         match bucket.put(hash_key[0], value.0, segment.depth) {
             // Overflowed the bucket!
-            Err(e) => {
+            Err(_) => {
                 info!("Bucket overflowed. Allocating new segment and splitting.");
                 // Drop the bucket lock before we split, we don't need it
                 // segment and maybe directory
@@ -146,7 +137,7 @@ impl MehDB {
                 let offset = segment.offset;
                 let write_lock = RwLockUpgradableReadGuard::upgrade(segment_node);
                 drop(segment_locker);
-                self.split_segment(segment, hash_key[0], segment_index, write_lock)
+                self.split_segment(segment, hash_key[0], write_lock)
                     .with_context(|| format!("Splitting segement at offset {}", offset))?;
                 // TODO: don't be so inneficient. We already know the hash_key!
                 // Call put again, it may end up in a new bucket or in the same one that's now had
@@ -173,7 +164,7 @@ impl MehDB {
         info!("hash_key: {:?}", hash_key);
         let bucket = match self.bucket_for_key(&hash_key) {
             Ok(b) => b,
-            Err(e) => {
+            Err(_) => {
                 warn!("No bucket found for key {:?}", key);
                 return None;
             }
@@ -185,8 +176,7 @@ impl MehDB {
         &self,
         segment: Segment,
         hk: u64,
-        segment_index: u32,
-        lock: RwLockWriteGuard<SegmentNode>,
+        _lock: RwLockWriteGuard<SegmentNode>,
     ) -> Result<()> {
         info!("Splitting segment");
         let mut segment = segment;
@@ -222,7 +212,7 @@ impl MehDB {
 
         //TODO: refactor this to be more idiomatic
         info!("Allocating new segment with depth {}", new_depth);
-        let (new_segment_index, new_segment) =
+        let (new_segment_index, _) =
             match self.segmenter.allocate_with_buckets(new_buckets, new_depth) {
                 Ok(s) => s,
                 Err(e) => return Err(e.context("Allocating new segment with populated buckets.")),
@@ -231,7 +221,6 @@ impl MehDB {
             .directory
             .global_depth()
             .context("Getting global depth + read lock.")?;
-        let s = hk >> 64 - *global_depth;
         let step = 1 << (*global_depth - new_depth);
         let mut start_dir_entry = if segment.depth == 0 {
             0

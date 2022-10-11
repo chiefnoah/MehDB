@@ -1,12 +1,11 @@
 use anyhow::{anyhow, Context, Result};
 use crossbeam::sync::{ShardedLock, ShardedLockWriteGuard};
-use log::{debug, error, info, trace, warn};
-use memmap::{Mmap, MmapMut};
-use std::fs::{self, File, OpenOptions};
-use std::io::{self, Write};
+use log::{debug, info, trace};
+use memmap::MmapMut;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::ops::Deref;
 use std::path::PathBuf;
-use std::sync::PoisonError;
 use tempfile::NamedTempFile;
 
 pub trait Directory<T: Sized = Self>: Sized {
@@ -18,11 +17,6 @@ pub trait Directory<T: Sized = Self>: Sized {
     fn grow(&self) -> Result<u32>;
     fn global_depth(&self) -> Result<GlobalDepth>;
     fn grow_if_eq(&self, local_depth: u8) -> Result<u8>;
-}
-
-pub struct MemoryDirectory {
-    // dir contains the directory and the global depth in a tuple
-    dir: ShardedLock<(Vec<u32>, u8)>,
 }
 
 pub struct MMapDirectory {
@@ -56,7 +50,6 @@ impl Directory for MMapDirectory {
         // mmaps are unsafe!
         let map = unsafe { MmapMut::map_mut(&file).context("Initializing mmap")? };
         // If the mmap is empty or new, make it writeable, populate the global_
-        let global_depth = map[0];
         Ok(Self {
             map: ShardedLock::new(map),
             config,
@@ -65,7 +58,7 @@ impl Directory for MMapDirectory {
 
     fn segment_index(&self, i: u64) -> Result<u32> {
         let unlocked = match self.map.read() {
-            Err(e) => return Err(anyhow!("Directory lock is probably poisoned.")),
+            Err(_) => return Err(anyhow!("Directory lock is probably poisoned.")),
             Ok(l) => l,
         };
         let global_depth = unlocked[0];
@@ -101,7 +94,7 @@ impl Directory for MMapDirectory {
 
     fn grow(&self) -> Result<u32> {
         let unlocked = match self.map.read() {
-            Err(e) => return Err(anyhow!("Directory lock is probably poisoned.")),
+            Err(_) => return Err(anyhow!("Directory lock is probably poisoned.")),
             Ok(l) => l,
         };
         // Create a temporary file, we'll fill this with the contents of the current map, but
@@ -141,7 +134,7 @@ impl Directory for MMapDirectory {
         let new_map = unsafe { MmapMut::map_mut(&f)? };
         drop(unlocked);
         let mut unlocked = match self.map.write() {
-            Err(e) => return Err(anyhow!("Directory lock is probably poisoned.")),
+            Err(_) => return Err(anyhow!("Directory lock is probably poisoned.")),
             Ok(l) => l,
         };
         *unlocked = new_map;
@@ -150,7 +143,7 @@ impl Directory for MMapDirectory {
 
     fn global_depth(&self) -> Result<GlobalDepth> {
         let unlocked = match self.map.write() {
-            Err(e) => return Err(anyhow!("Directory lock is probably poisoned.")),
+            Err(_) => return Err(anyhow!("Directory lock is probably poisoned.")),
             Ok(l) => l,
         };
         match unlocked.get(0) {
@@ -164,7 +157,7 @@ impl Directory for MMapDirectory {
 
     fn grow_if_eq(&self, local_depth: u8) -> Result<u8> {
         let mut unlocked = match self.map.write() {
-            Err(e) => return Err(anyhow!("Directory lock is probably poisoned.")),
+            Err(_) => return Err(anyhow!("Directory lock is probably poisoned.")),
             Ok(l) => l,
         };
         let global_depth = match unlocked.get(0) {

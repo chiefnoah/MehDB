@@ -1,9 +1,6 @@
-use anyhow::{Context, Result};
-use log::info;
+use anyhow::Result;
 use std::default::Default;
-use std::fs::File;
-use std::io::{Read, Seek, SeekFrom, Write};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::io::{Read, Seek, Write};
 
 /// Types that implement `Serializable` should pack all or some of their properties into the
 /// provided buffer. It is not a requirement to call `Write::flush()`, it should be assumed that it
