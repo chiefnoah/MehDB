@@ -3,6 +3,7 @@ extern crate pretty_env_logger;
 pub mod directory;
 mod locking;
 pub mod meh;
+pub mod record;
 pub mod segment;
 pub mod serializer;
 
@@ -106,41 +107,5 @@ fn main() -> Result<()> {
         end_time,
         RECORDS as f64 / end_time
     );
-    // Verify single-threaded that this all works...
-    //for i in 0..RECORDS {
-    //    info!("i: {}", i);
-    //    let i = i as u64;
-    //    let key = ByteKey(i.to_le_bytes().to_vec());
-    //    let get_key = key.clone();
-    //    let value = ByteValue(i * 2);
-    //    mehdb
-    //        .put(key, value)
-    //        .context("Error inserting record")
-    //        .expect("Unable to insert record!");
-    //    mehdb
-    //        .get(get_key)
-    //        .with_context(|| format!("Key 0 missing at i {}", i))
-    //        .unwrap();
-    //}
-    //let end_time = start_time.elapsed().as_secs_f64();
-    //println!(
-    //    "Elapsed time: {:.2?}\nAvg inserts/us: {:.2}",
-    //    end_time,
-    //    RECORDS as f64 / end_time
-    //);
-    //info!("Done putting, trying to read now...");
-    //let start_time = Instant::now();
-    //for i in 0..RECORDS {
-    //    let i = i as u64;
-    //    let key = ByteKey(i.to_le_bytes().to_vec());
-    //    let r = mehdb.get(key).expect(&format!("Missing record for {}", i));
-    //    info!("k: {} v: {:?}", i, r);
-    //}
-    //let end_time = start_time.elapsed().as_secs_f64();
-    //println!(
-    //    "Elapsed time: {:.2?}\nAvg gets/s: {:.2}",
-    //    end_time,
-    //    RECORDS as f64 / end_time
-    //);
     Ok(())
 }

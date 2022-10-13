@@ -9,35 +9,54 @@ use std::mem::size_of;
 
 // The number of records in each bucket.
 // This may be adatped to be parametrizable or dynamic in the future.
-pub const BUCKET_RECORDS: usize = 32;
+pub const BUCKET_RECORDS: usize = 16;
 pub const BUCKET_SIZE: usize = BUCKET_RECORDS * size_of::<Record>();
 
 #[derive(Debug)]
 pub struct Record {
-    pub hash_key: u64,
-    pub value: u64,
+    tx: u128,
+    pub hash_key: [u64; 4],
+    pub offset: u64,
 }
 
 impl Record {
-    pub const fn hash_key_size() -> usize {
-        size_of::<u64>()
-    }
-    pub const fn value_size() -> usize {
-        size_of::<u64>()
-    }
 
     pub fn to_bytes(&self) -> [u8; size_of::<Self>()] {
         const SIZE: usize = size_of::<Record>();
         let mut buf: [u8; SIZE] = [0; SIZE];
-        buf[0..Record::hash_key_size()].copy_from_slice(&self.hash_key.to_le_bytes());
-        buf[Record::hash_key_size()..].copy_from_slice(&self.value.to_le_bytes());
+        let tx_size = size_of::<u128>();
+        let hk_size = size_of::<[u64; 4]>();
+        let offset_size = size_of::<u64>();
+        buf[0..tx_size].copy_from_slice(&self.tx.to_le_bytes());
+        buf[tx_size..tx_size+hk_size].copy_from_slice(&self.hash_key.to_bytes());
+        buf[tx_size+hk_size..].copy_from_slice(&self.offset.to_le_bytes());
         buf
     }
 
     pub fn from_bytes(buf: [u8; size_of::<Self>()]) -> Self {
+        let tx = u128::from_le_bytes(buf[0..])
         let hash_key = u64::from_le_bytes(buf[0..8].try_into().unwrap());
         let value = u64::from_le_bytes(buf[8..16].try_into().unwrap());
-        Self { hash_key, value }
+        //Self { hash_key, value }
+    }
+}
+
+impl [u64; 4] {
+    fn to_bytes(&self) -> [u8; 32] {
+        let buf = [u8; 0];
+        buf[0..8] = self[0].to_le_bytes();
+        buf[8..16] = self[1].to_le_bytes();
+        buf[16..24] = self[2].to_le_bytes();
+        buf[24..32] = self[3].to_le_bytes();
+        buf
+    }
+    
+    fn from_bytes(buf: [u8; size_of::<Self>()]) -> Self {
+        let buf = [u64; 0];
+        buf[0..8] = self[0].to_le_bytes();
+        buf[8..16] = self[1].to_le_bytes();
+        buf[16..24] = self[2].to_le_bytes();
+        buf[24..32] = self[3].to_le_bytes();
     }
 }
 
@@ -137,10 +156,10 @@ impl Bucket {
     /// successful, otherwise an error indicating an overflow. In the event of an overflow, it is
     /// the responsibility of the Segmenter to split and allocate annother segment so the new
     /// record can be inserted.
-    pub fn put(&mut self, hk: u64, value: u64, local_depth: u8) -> Result<usize, BucketFullError> {
+    pub fn put(&mut self, record: Record, local_depth: u8) -> Result<usize, BucketFullError> {
         debug!(
-            "Inserting hk: {}\tvalue: {}\t local depth: {}",
-            hk, value, local_depth
+            "Inserting record: {}"",
+            record
         );
         let index = match self.maybe_index_to_insert(hk, local_depth) {
             None => {

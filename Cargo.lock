@@ -229,7 +229,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "mehdb"
+name = "meh"
 version = "0.1.0"
 dependencies = [
  "anyhow",
