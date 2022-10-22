@@ -9,7 +9,7 @@ use std::mem::size_of;
 
 // The number of records in each bucket.
 // This may be adatped to be parametrizable or dynamic in the future.
-pub const BUCKET_RECORDS: usize = 32;
+pub const BUCKET_RECORDS: usize = 16;
 pub const BUCKET_SIZE: usize = BUCKET_RECORDS * size_of::<Record>();
 
 #[derive(Debug)]
@@ -97,6 +97,7 @@ impl Bucket {
         }
     }
 
+    #[inline]
     pub fn get(&self, hk: u64) -> Option<Record> {
         debug!("Searching bucket for {}", hk);
         for record in self.iter() {
@@ -109,6 +110,7 @@ impl Bucket {
         None
     }
 
+    #[inline]
     fn maybe_index_to_insert(&self, hk: u64, local_depth: u8) -> Option<usize> {
         let local_mask = normalize_key(hk, local_depth);
         for (i, record) in self.iter().enumerate() {
@@ -137,6 +139,7 @@ impl Bucket {
     /// successful, otherwise an error indicating an overflow. In the event of an overflow, it is
     /// the responsibility of the Segmenter to split and allocate annother segment so the new
     /// record can be inserted.
+    #[inline]
     pub fn put(&mut self, hk: u64, value: u64, local_depth: u8) -> Result<usize, BucketFullError> {
         debug!(
             "Inserting hk: {}\tvalue: {}\t local depth: {}",

@@ -1,10 +1,10 @@
+use std::cell::RefCell;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Seek, Write};
 use std::iter::Iterator;
 use std::mem::size_of;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::cell::RefCell;
 
 use crate::segment::bucket::{Bucket, BUCKET_SIZE};
 use crate::serializer::Serializable;
@@ -60,7 +60,6 @@ impl Serializable for u32 {
         Ok(u32::from_le_bytes(buf))
     }
 }
-
 
 /// A Segmenter is a something responsible for allocating and reading segments
 pub trait Segmenter {
@@ -120,9 +119,14 @@ impl Clone for ThreadSafeFileSegmenter {
     }
 }
 
+pub struct PaddedHeader {
+    num_segments: u32,
+    padding: [u8; 4092],
+}
+
 impl Segmenter for ThreadSafeFileSegmenter {
     // For this implementation, the header is simply the u32 num_segments
-    type Header = u32;
+    type Header = PaddedHeader;
     fn segment(&self, index: u32) -> Result<Segment> {
         let mut file = self.file.borrow_mut();
         let offset = ((index as usize * SEGMENT_SIZE) + size_of::<Self::Header>()) as u64;
@@ -145,27 +149,21 @@ impl Segmenter for ThreadSafeFileSegmenter {
         let index = (*num_segments).clone();
         *num_segments += 1;
         // Flush write the current number of segments to the file
-        file
-            .seek(io::SeekFrom::Start(0))
+        file.seek(io::SeekFrom::Start(0))
             .context("Seeking to beginning of segment file.")?;
-        file
-            .write_all(&num_segments.to_le_bytes())
+        file.write_all(&num_segments.to_le_bytes())
             .context("Syncing num_segments")?;
         file.flush()?;
         //------------------------------------------👇 for num_segments header in segments file
         let offset = ((index as usize * SEGMENT_SIZE) + size_of::<Self::Header>()) as u64;
         debug!("New segment offset: {}", offset);
         // Seek to the proper offset
-        file
-            .seek(io::SeekFrom::Start(offset))
+        file.seek(io::SeekFrom::Start(offset))
             .with_context(|| format!("Seeking to new segment's offset {}", offset))?;
         let mut buf: [u8; SEGMENT_SIZE] = [0; SEGMENT_SIZE];
         buf[..1].copy_from_slice(&depth.to_le_bytes());
-        file
-            .write_all(&buf)
-            .context("Writing new segment bytes")?;
-        file
-            .flush()
+        file.write_all(&buf).context("Writing new segment bytes")?;
+        file.flush()
             .context("Flushing buffer after segment allocate.")?;
         Ok((index, Segment { depth, offset }))
     }
@@ -178,24 +176,20 @@ impl Segmenter for ThreadSafeFileSegmenter {
         let index = (*num_segments).clone();
         *num_segments += 1;
         // Flush write the current number of segments to the file
-        file
-            .seek(io::SeekFrom::Start(0))
+        file.seek(io::SeekFrom::Start(0))
             .context("Seeking to beginning of segment file.")?;
-        file
-            .write_all(&num_segments.to_le_bytes())
+        file.write_all(&num_segments.to_le_bytes())
             .context("Syncing num_segments")?;
         // ------------------------------------------👇 for num_segments header in segments file
         let offset = ((index as usize * SEGMENT_SIZE) + size_of::<Self::Header>()) as u64;
         info!("New segment offset: {}", offset);
         // We create a BufWriter because we're going to be writing a lot and don't want to flush it
         // until we're done.
-        file
-            .seek(io::SeekFrom::Start(offset))
+        file.seek(io::SeekFrom::Start(offset))
             .context("Seeking to new segment location")?;
         let mut buf: [u8; 1] = [0; 1];
         buf[..].copy_from_slice(&depth.to_le_bytes());
-        file
-            .write_all(&buf)
+        file.write_all(&buf)
             .context("Writing new segment's depth.")?;
         for (i, bucket) in buckets.iter().enumerate() {
             debug!("Writing bucket with index {}", i);
@@ -203,8 +197,7 @@ impl Segmenter for ThreadSafeFileSegmenter {
                 .pack(&mut *file)
                 .with_context(|| format!("Writing bucket with index {}", i))?;
         }
-        file
-            .flush()
+        file.flush()
             .context("Flushing outer buffer after segment allocate.")?;
         Ok((index, Segment { offset, depth }))
     }
@@ -214,8 +207,7 @@ impl Segmenter for ThreadSafeFileSegmenter {
         let mut file = self.file.borrow_mut();
         //----------------------------------------------------------👇 for segment_depth
         let offset = segment.offset + (index as usize * BUCKET_SIZE) as u64 + 1;
-        file
-            .seek(io::SeekFrom::Start(offset))
+        file.seek(io::SeekFrom::Start(offset))
             .context("Seeking to bucket's offset")?;
         debug!("Reading bucket at offset {}", offset);
         return Bucket::unpack(&mut *file);
@@ -223,8 +215,7 @@ impl Segmenter for ThreadSafeFileSegmenter {
 
     fn write_bucket(&self, bucket: &Bucket) -> Result<()> {
         let mut file = self.file.borrow_mut();
-        file
-            .seek(io::SeekFrom::Start(bucket.offset))
+        file.seek(io::SeekFrom::Start(bucket.offset))
             .context("Seeking to bucket's offset")?;
         bucket.pack(&mut *file)?;
         file.flush()?;
@@ -280,4 +271,3 @@ impl ThreadSafeFileSegmenter {
         Ok(out)
     }
 }
-

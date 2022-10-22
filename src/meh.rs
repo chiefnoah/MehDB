@@ -11,7 +11,6 @@ use std::sync::Arc;
 use highway::{self, HighwayHash, HighwayHasher};
 use parking_lot::{RwLockUpgradableReadGuard, RwLockWriteGuard};
 
-
 // My Extendible Hash Database
 #[derive(Clone)]
 pub struct MehDB {
@@ -21,7 +20,6 @@ pub struct MehDB {
     pub segmenter: ThreadSafeFileSegmenter,
     pub lock: Arc<StripedLock<SegmentNode>>,
 }
-
 
 /// A Extendible hashing implementation that does not support multithreading.
 impl MehDB {
@@ -230,8 +228,11 @@ impl MehDB {
         start_dir_entry = start_dir_entry << (*global_depth - segment.depth);
         start_dir_entry = start_dir_entry - (start_dir_entry % 2);
         for i in 0..step {
-            self.directory
-                .set_segment_index(start_dir_entry + i + step, new_segment_index, &mut global_depth)?;
+            self.directory.set_segment_index(
+                start_dir_entry + i + step,
+                new_segment_index,
+                &mut global_depth,
+            )?;
         }
         drop(global_depth);
         // Update the original segment
