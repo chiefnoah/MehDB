@@ -119,9 +119,11 @@ impl Clone for ThreadSafeFileSegmenter {
     }
 }
 
+/// PaddedHeader gives the 4kb padding necessary for good performance
+/// in the segment file.
 pub struct PaddedHeader {
-    num_segments: u32,
-    padding: [u8; 4092],
+    _num_segments: u32,
+    _padding: [u8; 4092],
 }
 
 impl Segmenter for ThreadSafeFileSegmenter {

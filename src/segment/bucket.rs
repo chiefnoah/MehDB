@@ -9,7 +9,7 @@ use std::mem::size_of;
 
 // The number of records in each bucket.
 // This may be adatped to be parametrizable or dynamic in the future.
-pub const BUCKET_RECORDS: usize = 16;
+pub const BUCKET_RECORDS: usize = 256;
 pub const BUCKET_SIZE: usize = BUCKET_RECORDS * size_of::<Record>();
 
 #[derive(Debug)]
