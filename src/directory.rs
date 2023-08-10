@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use crossbeam::sync::{ShardedLock, ShardedLockWriteGuard};
 use log::{debug, info, trace};
-use memmap::MmapMut;
+use memmap2::MmapMut;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::ops::Deref;
