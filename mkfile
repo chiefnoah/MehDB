@@ -16,7 +16,7 @@ clean-cache:V:
 clean: clean-data
     rm -f target/release/mehdb
 
-clean-data: *.bin
+clean-data:V:
     rm -f *.bin
 
 
