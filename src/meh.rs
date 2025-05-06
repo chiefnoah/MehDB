@@ -3,7 +3,6 @@ use crate::locking::{SegmentNode, StripedLock};
 use crate::segment::{
     Bucket, Record, Segment, Segmenter, ThreadSafeFileSegmenter, BUCKETS_PER_SEGMENT,
 };
-use crate::serializer;
 use anyhow::{Context, Result};
 use log::{debug, info, warn};
 use std::sync::Arc;
@@ -43,7 +42,6 @@ impl MehDB {
             );
             // Drop the existing lock (we might lose our place here 🥲)
             drop(segment_node);
-            drop(segment_locker);
             segment_index = segment_index_double_check;
             segment_locker = self.lock.get(segment_index);
             // Acquire a new upgradable_read lock
@@ -69,14 +67,14 @@ impl MehDB {
         self.segmenter.bucket(&segment, bucket_index)
     }
 
-    pub fn put(&mut self, key: serializer::ByteKey, value: serializer::ByteValue) -> Result<()> {
+    pub fn put(&mut self, key: &[u8], value: u64) -> Result<()> {
         let hasher = HighwayHasher::new(self.hasher_key);
         // We only need the first u64 of the returned value because
         // It's unlikely we have the hard drive space to support a u64 deep directory
         // and we *definitely* don't have the RAM to.
         // TODO: support the full 256 bit keyspace for magical distributed system support
-        let hash_key = hasher.hash256(&key.0);
-        info!("hash_key: {:?}\tvalue: {}", hash_key, value.0);
+        let hash_key = hasher.hash256(&key);
+        info!("hash_key: {:?}\tvalue: {}", hash_key, value);
         let mut segment_index = self
             .directory
             .segment_index(hash_key[0])
@@ -96,7 +94,6 @@ impl MehDB {
             );
             // Drop the existing lock (we might lose our place here 🥲)
             drop(segment_node);
-            drop(segment_locker);
             segment_index = segment_index_double_check;
             segment_locker = self.lock.get(segment_index);
             // Acquire a new upgradable_read lock
@@ -125,7 +122,7 @@ impl MehDB {
             .bucket(&segment, bucket_index)
             .with_context(|| format!("Reading bucket at index {}", bucket_index))?;
         debug!("Inserting record into bucket...");
-        match bucket.put(hash_key[0], value.0, segment.depth) {
+        match bucket.put(hash_key[0], value, segment.depth) {
             // Overflowed the bucket!
             Err(_) => {
                 info!("Bucket overflowed. Allocating new segment and splitting.");
@@ -134,7 +131,6 @@ impl MehDB {
                 drop(bucket_lock);
                 let offset = segment.offset;
                 let write_lock = RwLockUpgradableReadGuard::upgrade(segment_node);
-                drop(segment_locker);
                 self.split_segment(segment, hash_key[0], write_lock)
                     .with_context(|| format!("Splitting segement at offset {}", offset))?;
                 // TODO: don't be so inneficient. We already know the hash_key!
@@ -152,13 +148,13 @@ impl MehDB {
             .write_bucket(&bucket)
             .with_context(|| format!("Saving updated bucket at offset {}", bucket.offset))
     }
-    pub fn get(&mut self, key: serializer::ByteKey) -> Option<Record> {
+    pub fn get(&mut self, key: &[u8]) -> Option<Record> {
         let hasher = HighwayHasher::new(self.hasher_key);
         // We only need the first u64 of the returned value because
         // It's unlikely we have the hard drive space to support a u64 deep directory
         // and we *definitely* don't have the RAM to.
         // TODO: support the full 256 bit keyspace for magical distributed system support
-        let hash_key = hasher.hash256(&key.0);
+        let hash_key = hasher.hash256(&key);
         info!("hash_key: {:?}", hash_key);
         let bucket = match self.bucket_for_key(&hash_key) {
             Ok(b) => b,
