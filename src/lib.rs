@@ -3,4 +3,3 @@ pub mod locking;
 pub mod meh;
 pub mod segment;
 pub mod serializer;
-mod fnv;

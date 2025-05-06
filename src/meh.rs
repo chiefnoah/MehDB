@@ -1,10 +1,11 @@
 use crate::directory::{Directory, MMapDirectory};
 use crate::locking::{SegmentNode, StripedLock};
 use crate::segment::{
-    Bucket, Record, Segment, Segmenter, ThreadSafeFileSegmenter, BUCKETS_PER_SEGMENT,
+    BUCKETS_PER_SEGMENT, Bucket, Record, Segment, Segmenter, ThreadSafeFileSegmenter,
 };
 use anyhow::{Context, Result};
 use log::{debug, info, warn};
+use std::path::Path;
 use std::sync::Arc;
 
 use highway::{self, HighwayHash, HighwayHasher};
@@ -22,6 +23,18 @@ pub struct MehDB {
 
 /// A Extendible hashing implementation that does not support multithreading.
 impl MehDB {
+    pub fn new(dir: impl AsRef<Path>) -> Result<Self> {
+        let segmenter = ThreadSafeFileSegmenter::init(dir.as_ref().join("./segment.bin"))?;
+        let directory = MMapDirectory::init(dir.as_ref().join("directory.bin"))?;
+        let lock = StripedLock::init(1024);
+        Ok(MehDB {
+            hasher_key: highway::Key([53252, 2352323, 563956259, 234832]),
+            directory: Arc::new(directory),
+            segmenter: segmenter.clone(),
+            lock: Arc::new(lock),
+        })
+    }
+
     fn bucket_for_key(&mut self, key: &[u64; 4]) -> Result<Bucket> {
         let mut segment_index = self
             .directory
