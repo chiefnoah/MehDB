@@ -20,4 +20,5 @@ crossbeam = "0.8.2"
 parking_lot = "0.12.1"
 
 [profile.release]
-lto = true
+lto = "fat"
+codegen-units=1

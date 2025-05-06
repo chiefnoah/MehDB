@@ -4,7 +4,7 @@ build:
 	cargo build
 
 release:
-	cargo build --release
+	MALLOC_CONF='thp:always,metadata_thp:always' cargo build --release
 
 test:
 	cargo test

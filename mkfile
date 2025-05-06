@@ -5,7 +5,7 @@ build:V:
     cargo build
 
 release:V:
-    cargo build --release
+    MALLOC_CONF='thp:always,metadata_thp:always' cargo build --release
 
 test:V:
     cargo test
@@ -23,5 +23,5 @@ clean-data:V:
 target/release/mehdb: $RUSTFILES
     cargo build --release
 
-benchmark: clean-data release target/release/mehdb
+benchmark: clean-data target/release/mehdb
     target/release/mehdb

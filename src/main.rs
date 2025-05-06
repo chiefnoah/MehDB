@@ -24,8 +24,8 @@ fn main() -> Result<()> {
     pretty_env_logger::init();
     let segmenter = ThreadSafeFileSegmenter::init("./segment.bin".into())?;
     let directory = MMapDirectory::init("./directory.bin".into())?;
-    const WRITE_THREADS: usize = 12;
-    const READ_THREADS: usize = 16;
+    const WRITE_THREADS: usize = 16;
+    const READ_THREADS: usize = 24;
     let lock = StripedLock::init((WRITE_THREADS * 50) + 10);
     let mehdb = MehDB {
         hasher_key: highway::Key([53252, 2352323, 563956259, 234832]),
@@ -34,7 +34,7 @@ fn main() -> Result<()> {
         lock: Arc::new(lock),
     };
     let mut write_threads: Vec<JoinHandle<()>> = Vec::with_capacity(4);
-    const RECORDS: usize = 10_000_000;
+    const RECORDS: usize = 100_000_000;
     let start_time = Instant::now();
     for thread_id in 0..WRITE_THREADS {
         let mut db = mehdb.clone();
