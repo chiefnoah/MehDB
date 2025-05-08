@@ -7,14 +7,13 @@ pub mod segment;
 pub mod serializer;
 
 use std::sync::Arc;
-use std::thread::{spawn, JoinHandle};
+use std::thread::{JoinHandle, spawn};
 use std::time::Instant;
 
 use crate::directory::{Directory, MMapDirectory};
 use crate::locking::StripedLock;
 use crate::meh::MehDB;
 use crate::segment::ThreadSafeFileSegmenter;
-use crate::serializer::{ByteKey, ByteValue};
 
 use anyhow::{Context, Result};
 use highway;
@@ -43,9 +42,9 @@ fn main() -> Result<()> {
             let max = (thread_id + 1) * (RECORDS / WRITE_THREADS);
             for i in min..max {
                 let i = i as u64;
-                let key = ByteKey(i.to_le_bytes().to_vec());
-                let value = ByteValue(i * 2);
-                db.put(key, value)
+                let key = i.to_le_bytes().to_vec();
+                let value = i * 2;
+                db.put(&key, value)
                     .context("Error inserting record")
                     .expect("Unable to insert record!");
             }
@@ -72,8 +71,8 @@ fn main() -> Result<()> {
             let mut errors = false;
             for i in min..max {
                 let i = i as u64;
-                let key = ByteKey(i.to_le_bytes().to_vec());
-                match db.get(key) {
+                let key = i.to_le_bytes().to_vec();
+                match db.get(&key) {
                     None => {
                         //error!("Record missing for {} in thread {}", i, thread_id);
                         errors = true;
