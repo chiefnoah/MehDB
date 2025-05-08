@@ -2,6 +2,9 @@
 name = "mehdb"
 version = "0.1.0"
 edition = "2024"
+license-file = "LICENSE"
+description = "A prototype consistent hashing index"
+homepage = "https://github.com/chiefnoah/mehdb"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
